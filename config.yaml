@@ -8,6 +8,7 @@ default:
   version: "1.0.0"
   confidential: false
   watermark: false
+  filename_prefix: "GerdsenAI_"  # Prefix for generated PDF filenames
 
 # Page settings
 page:
