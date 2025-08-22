@@ -1,0 +1,98 @@
+# GerdsenAI Document Builder Configuration
+# This file contains default settings for document generation
+
+# Default metadata for documents without front matter
+default:
+  author: "Garrett Gerdsen"
+  company: "GerdsenAI"
+  version: "1.0.0"
+  confidential: false
+  watermark: false
+
+# Page settings
+page:
+  size: "A4"  # Options: A4, Letter, Legal, A3
+  orientation: "portrait"  # Options: portrait, landscape
+  
+# Margins (in mm)
+margins:
+  top: 25
+  right: 20
+  bottom: 25
+  left: 20
+
+# Header and footer settings
+header:
+  height: 15  # in mm
+  show_title: true
+  show_section: false
+  
+footer:
+  height: 15  # in mm
+  show_page_numbers: true
+  show_logo: true
+  show_date: false
+
+# Typography settings
+fonts:
+  body:
+    family: "SF Pro Rounded"
+    size: 11  # in points
+    line_height: 1.6
+  
+  heading1:
+    size: 24
+    weight: 700
+  
+  heading2:
+    size: 18
+    weight: 600
+  
+  heading3:
+    size: 14
+    weight: 600
+  
+  code:
+    family: "SF Mono"
+    size: 9.5
+
+# Color scheme
+colors:
+  primary: "#1a1a1a"
+  secondary: "#2c3e50"
+  accent: "#3498db"
+  code_background: "#f6f8fa"
+  code_text: "#24292e"
+  link: "#3498db"
+  table_header: "#f6f8fa"
+  table_border: "#e1e4e8"
+
+# Code highlighting
+syntax_highlighting:
+  enabled: true
+  theme: "github"  # Options: github, monokai, dracula, tomorrow
+  line_numbers: false
+
+# Mermaid diagram settings
+mermaid:
+  theme: "default"  # Options: default, dark, forest, neutral
+  background: "transparent"
+  
+# Export settings
+export:
+  optimize_size: true
+  pdf_variant: "pdf/a-3b"  # PDF/A for archival
+  compress_images: true
+  embed_fonts: true
+
+# Advanced settings
+advanced:
+  enable_hyphenation: true
+  orphan_lines: 3
+  widow_lines: 3
+  page_break_avoid:
+    - headings
+    - tables
+    - code_blocks
+    - images
+    - mermaid_diagrams
