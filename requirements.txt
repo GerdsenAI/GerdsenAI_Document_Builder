@@ -1,0 +1,21 @@
+# GerdsenAI Document Builder Requirements
+# Python 3.9+ required
+
+# Core PDF Generation
+reportlab>=4.0.0
+
+# Markdown Processing
+markdown>=3.5.0
+pymdown-extensions>=10.0
+
+# HTML/XML Processing
+beautifulsoup4>=4.12.0
+
+# Image Processing
+Pillow>=10.0.0
+
+# Configuration
+pyyaml>=6.0
+
+# Optional for development
+watchdog>=3.0.0  # File system monitoring
