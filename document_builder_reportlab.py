@@ -291,13 +291,25 @@ class DocumentBuilder:
                     # Skip paragraphs containing images for now
                     # Images should be handled as separate elements, not inline
                     continue
+                
+                # Get paragraph text and clean problematic HTML attributes
+                para_text = str(element)
+                
+                # Remove problematic attributes that ReportLab can't handle
+                # Remove id attributes from footnote links
+                para_text = re.sub(r'\s*id="[^"]*"', '', para_text)
+                para_text = re.sub(r'\s*class="[^"]*"', '', para_text)
+                
+                # Convert footnote references to simple superscript numbers
+                # Replace <sup id="fnref:1"><a class="footnote-ref" href="#fn:1">1</a></sup> with <sup>1</sup>
+                para_text = re.sub(r'<sup[^>]*><a[^>]*>(\d+)</a></sup>', r'<sup>\1</sup>', para_text)
+                
                 # Check if paragraph contains code elements
-                elif element.find('code'):
+                if element.find('code'):
                     # Process each part of the paragraph
                     para_parts = []
-                    text = str(element)
                     # Split by code tags and process
-                    parts = re.split(r'(<code>.*?</code>)', text)
+                    parts = re.split(r'(<code>.*?</code>)', para_text)
                     code_count = 0
                     for part in parts:
                         if part.startswith('<code>') and part.endswith('</code>'):
@@ -326,7 +338,6 @@ class DocumentBuilder:
                         story.append(Paragraph(combined_text, self.styles['CustomBody']))
                 else:
                     # Check if paragraph is short (might cause bad justification)
-                    para_text = str(element)
                     if len(para_text) < 150:  # Short paragraphs look bad justified
                         left_style = ParagraphStyle(
                             'TempLeft',
@@ -392,8 +403,8 @@ class DocumentBuilder:
                 story.append(Paragraph(quote_text, self.styles['CustomQuote']))
                 story.append(Spacer(1, 0.1*inch))
             elif element.name == 'ul' or element.name == 'ol':
-                for li in element.find_all('li', recursive=False):
-                    bullet = '• ' if element.name == 'ul' else f'{li.sourceline}. '
+                for idx, li in enumerate(element.find_all('li', recursive=False), 1):
+                    bullet = '• ' if element.name == 'ul' else f'{idx}. '
                     text = bullet + li.get_text()
                     story.append(Paragraph(text, self.styles['CustomBody']))
                 story.append(Spacer(1, 0.1*inch))
