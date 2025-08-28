@@ -82,10 +82,9 @@ setup_environment() {
     echo -e "${BLUE}Installing required packages...${NC}"
     pip install --upgrade \
         markdown \
-        weasyprint \
+        reportlab \
         pillow \
         beautifulsoup4 \
-        pymupdf \
         watchdog \
         pygments \
         pyyaml > /dev/null 2>&1

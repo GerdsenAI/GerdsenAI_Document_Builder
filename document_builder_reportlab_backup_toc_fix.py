@@ -344,11 +344,15 @@ class DocumentBuilder:
         
         story = []
         
-        # Check if document has any headings and auto-generate TOC if native TOC provided
-        has_headings = bool(soup.find_all(['h1', 'h2', 'h3']))
+        # Check if document has a TOC section and use native TableOfContents if available
+        toc_section = None
+        for element in soup.find_all(['h1', 'h2', 'h3']):
+            if 'table of contents' in element.get_text().lower():
+                toc_section = element
+                break
         
-        # If headings exist and native TOC provided, automatically add TOC
-        if has_headings and toc:
+        # If TOC section found and native TOC provided, use native approach
+        if toc_section and toc:
             # Add TOC heading and native TableOfContents
             story.append(Paragraph("Table of Contents", self.styles['TOCHeading']))
             story.append(Spacer(1, 12))
