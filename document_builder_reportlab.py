@@ -2,7 +2,7 @@
 """
 GerdsenAI Document Builder
 A world-class document builder that converts Markdown/Text files to professional PDFs
-with custom styling, Mermaid diagram support, and SF Pro font integration.
+with custom styling, working Table of Contents, and comprehensive logging.
 """
 
 import os
@@ -12,10 +12,13 @@ import re
 import base64
 import tempfile
 import subprocess
+import logging
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, Any, List, Tuple
 import io
+import traceback
 
 # Third-party imports
 import markdown
@@ -26,6 +29,8 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch, mm
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage
 from reportlab.platypus import Table, TableStyle, PageBreak, KeepTogether
+from reportlab.platypus.doctemplate import PageTemplate, BaseDocTemplate
+from reportlab.platypus.frames import Frame
 from reportlab.platypus.tableofcontents import TableOfContents
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT, TA_JUSTIFY
 from reportlab.pdfgen import canvas
@@ -36,6 +41,102 @@ from bs4 import BeautifulSoup
 import yaml
 
 
+def setup_logging(repo_path: Path) -> logging.Logger:
+    """Setup comprehensive logging system."""
+    log_dir = repo_path / "Logs"
+    log_dir.mkdir(exist_ok=True)
+    
+    # Create logger
+    logger = logging.getLogger('DocumentBuilder')
+    logger.setLevel(logging.DEBUG)
+    
+    # Create formatters
+    detailed_formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    console_formatter = logging.Formatter('%(levelname)s: %(message)s')
+    
+    # File handler with rotation
+    log_file = log_dir / f"document_builder_{datetime.now().strftime('%Y%m%d')}.log"
+    file_handler = RotatingFileHandler(
+        log_file,
+        maxBytes=10*1024*1024,  # 10MB
+        backupCount=5
+    )
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(detailed_formatter)
+    
+    # Console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(console_formatter)
+    
+    # Add handlers
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+    
+    logger.info("="*60)
+    logger.info("Document Builder Started")
+    logger.info(f"Log file: {log_file}")
+    logger.info("="*60)
+    
+    return logger
+
+
+class NumberedCanvas(canvas.Canvas):
+    """Custom canvas that tracks page numbers for TOC."""
+    
+    def __init__(self, *args, **kwargs):
+        canvas.Canvas.__init__(self, *args, **kwargs)
+        self.page_num = 0
+        self.toc = None
+        self.logger = logging.getLogger('DocumentBuilder.Canvas')
+        
+    def showPage(self):
+        """Called at the end of each page."""
+        self.page_num += 1
+        self.logger.debug(f"Page {self.page_num} completed")
+        canvas.Canvas.showPage(self)
+
+
+class TOCDocTemplate(SimpleDocTemplate):
+    """Custom document template that properly handles TOC notifications."""
+    
+    def __init__(self, *args, **kwargs):
+        self.toc = kwargs.pop('toc', None)
+        self.heading_entries = []  # Store heading info during first pass
+        SimpleDocTemplate.__init__(self, *args, **kwargs)
+        self.logger = logging.getLogger('DocumentBuilder.DocTemplate')
+        
+    def afterFlowable(self, flowable):
+        """Called after each flowable is rendered."""
+        # Check if this is a heading with TOC entry
+        if hasattr(flowable, '__toc_entry__'):
+            level, text, bookmark = flowable.__toc_entry__
+            # Get current page number from canvas
+            if hasattr(self.canv, 'page_num'):
+                page_num = self.canv.page_num
+            else:
+                page_num = self.page
+            
+            self.logger.debug(f"TOC Entry detected: Level {level}, Page {page_num}, Text: {text}")
+            
+            # Store entry for second pass
+            self.heading_entries.append((level, text, page_num, bookmark))
+            
+            # Notify the TOC
+            if self.toc:
+                self.notify('TOCEntry', (level, text, page_num, bookmark))
+    
+    def notify(self, kind, stuff):
+        """Handle TOC notifications."""
+        if kind == 'TOCEntry':
+            level, text, page_num, bookmark = stuff
+            if self.toc and hasattr(self.toc, 'addEntry'):
+                # Add the entry to TOC with proper page number
+                self.toc.addEntry(level, text, page_num, bookmark)
+                self.logger.debug(f"Added TOC entry: {text} -> Page {page_num}")
 
 
 class DocumentBuilder:
@@ -49,8 +150,13 @@ class DocumentBuilder:
         self.fonts_dir = self.repo_path / "SF Pro"
         self.output_dir = self.repo_path / "PDFs"
         
+        # Setup logging
+        self.logger = setup_logging(self.repo_path)
+        self.logger.info(f"Initializing DocumentBuilder with repo path: {repo_path}")
+        
         # Ensure output directory exists
         self.output_dir.mkdir(exist_ok=True)
+        self.logger.debug(f"Output directory: {self.output_dir}")
         
         # Load configuration
         self.config = self._load_config()
@@ -64,10 +170,14 @@ class DocumentBuilder:
         # Initialize TOC tracking
         self.toc_entries = []
         self.current_toc = None
+        self.heading_counter = 0
+        
+        self.logger.info("DocumentBuilder initialized successfully")
         
     def _load_config(self) -> Dict[str, Any]:
         """Load configuration from config.yaml or use defaults."""
         config_path = self.repo_path / "config.yaml"
+        self.logger.debug(f"Loading config from: {config_path}")
         
         default_config = {
             "title": "Document",
@@ -80,7 +190,8 @@ class DocumentBuilder:
             "page_size": "A4",
             "margins": {"top": 25, "right": 20, "bottom": 25, "left": 20},
             "header_height": 15,
-            "footer_height": 15
+            "footer_height": 15,
+            "filename_prefix": "GerdsenAI_"
         }
         
         if config_path.exists():
@@ -91,35 +202,29 @@ class DocumentBuilder:
                         default_config.update(yaml_config['default'])
                     if 'margins' in yaml_config:
                         default_config['margins'] = yaml_config['margins']
+                self.logger.debug("Config loaded successfully")
             except Exception as e:
-                print(f"Warning: Could not load config.yaml: {e}")
+                self.logger.warning(f"Could not load config.yaml: {e}")
+        else:
+            self.logger.debug("Using default configuration")
         
         return default_config
     
     def _register_fonts(self):
-        """Register fonts with ReportLab. Use system fonts that work better than PostScript .otf files."""
+        """Register fonts with ReportLab."""
         try:
-            # Try to register Helvetica fonts (which are built into ReportLab)
-            # These are more reliable than PostScript .otf files
-            from reportlab.pdfbase import pdfmetrics
-            from reportlab.pdfbase.ttfonts import TTFont
-            
-            # ReportLab has built-in support for these fonts:
-            # Helvetica, Helvetica-Bold, Helvetica-Oblique, Helvetica-BoldOblique
-            # Times-Roman, Times-Bold, Times-Italic, Times-BoldItalic
-            # Courier, Courier-Bold, Courier-Oblique, Courier-BoldOblique
-            
-            # We'll use the built-in fonts which are always available
-            print("✅ Using built-in ReportLab fonts for better compatibility")
-            
+            self.logger.debug("Registering fonts")
+            # ReportLab has built-in support for these fonts
+            self.logger.info("Using built-in ReportLab fonts for better compatibility")
         except Exception as e:
-            print(f"Info: Using default ReportLab fonts: {e}")
+            self.logger.error(f"Font registration error: {e}")
     
     def _setup_styles(self) -> Dict[str, ParagraphStyle]:
         """Setup paragraph styles for the document."""
+        self.logger.debug("Setting up document styles")
         styles = getSampleStyleSheet()
         
-        # Custom styles with SF Pro font
+        # Custom styles
         custom_styles = {
             'CustomTitle': ParagraphStyle(
                 'CustomTitle',
@@ -170,8 +275,8 @@ class DocumentBuilder:
                 spaceBefore=6,
                 spaceAfter=6,
                 leading=14,
-                wordWrap='LTR',  # Left-to-right word wrapping
-                splitLongWords=1,  # Allow splitting long words
+                wordWrap='LTR',
+                splitLongWords=1,
                 bulletIndent=0,
                 leftIndent=0,
                 rightIndent=0
@@ -181,9 +286,9 @@ class DocumentBuilder:
                 parent=styles['Code'],
                 fontName='Courier',
                 fontSize=9,
-                textColor=colors.HexColor('#00ff00'),  # Bright green text
-                backColor=colors.HexColor('#000000'),  # Black background
-                borderColor=colors.HexColor('#333333'),  # Dark gray border
+                textColor=colors.HexColor('#00ff00'),
+                backColor=colors.HexColor('#000000'),
+                borderColor=colors.HexColor('#333333'),
                 borderWidth=1,
                 borderPadding=8,
                 leftIndent=0,
@@ -196,7 +301,7 @@ class DocumentBuilder:
                 parent=styles['Normal'],
                 fontName='Courier-Bold',
                 fontSize=10,
-                textColor=colors.HexColor('#00c853'),  # Bright terminal green
+                textColor=colors.HexColor('#00c853'),
             ),
             'CustomQuote': ParagraphStyle(
                 'CustomQuote',
@@ -224,31 +329,31 @@ class DocumentBuilder:
             ),
             'TOCEntry1': ParagraphStyle(
                 'TOCEntry1',
-                parent=styles['BodyText'],
+                parent=styles['Normal'],
                 fontName='Helvetica',
                 fontSize=12,
                 leftIndent=0,
-                rightIndent=0,
+                rightIndent=30,
                 spaceAfter=6,
                 textColor=colors.HexColor('#1a1a1a')
             ),
             'TOCEntry2': ParagraphStyle(
                 'TOCEntry2',
-                parent=styles['BodyText'],
+                parent=styles['Normal'],
                 fontName='Helvetica',
                 fontSize=11,
                 leftIndent=20,
-                rightIndent=0,
+                rightIndent=30,
                 spaceAfter=4,
                 textColor=colors.HexColor('#333333')
             ),
             'TOCEntry3': ParagraphStyle(
                 'TOCEntry3',
-                parent=styles['BodyText'],
+                parent=styles['Normal'],
                 fontName='Helvetica',
                 fontSize=10,
                 leftIndent=40,
-                rightIndent=0,
+                rightIndent=30,
                 spaceAfter=3,
                 textColor=colors.HexColor('#666666')
             )
@@ -258,29 +363,25 @@ class DocumentBuilder:
         for name, style in custom_styles.items():
             styles.add(style)
         
+        self.logger.debug(f"Created {len(custom_styles)} custom styles")
         return styles
     
     def _create_toc(self):
         """Create a table of contents."""
-        from reportlab.platypus.tableofcontents import TableOfContents
+        self.logger.debug("Creating Table of Contents object")
         toc = TableOfContents()
         toc.levelStyles = [
             self.styles['TOCEntry1'],
             self.styles['TOCEntry2'], 
             self.styles['TOCEntry3']
         ]
+        # Configure dots
+        toc.dotsMinLevel = 0  # Show dots for all levels
         return toc
-    
-    def _find_anchor_for_text(self, text: str) -> str:
-        """Find the anchor name for a given heading text."""
-        if hasattr(self, '_headings_for_anchors'):
-            for heading in self._headings_for_anchors:
-                if heading['text'] == text:
-                    return heading['anchor']
-        return ""
     
     def _extract_metadata(self, content: str) -> Tuple[str, Dict[str, str]]:
         """Extract metadata from markdown front matter if present."""
+        self.logger.debug("Extracting metadata from content")
         metadata = self.config.copy()
         
         # Check for YAML front matter
@@ -295,21 +396,38 @@ class DocumentBuilder:
                     if ':' in line:
                         key, value = line.split(':', 1)
                         metadata[key.strip().lower()] = value.strip()
+                
+                self.logger.debug(f"Extracted metadata: {list(metadata.keys())}")
             except ValueError:
-                pass  # No closing --- found
+                self.logger.warning("No closing --- found for front matter")
         
         # Extract title from first H1 if not in metadata
         if metadata.get('title') == 'Document':
             title_match = re.search(r'^#\s+(.+)$', content, re.MULTILINE)
             if title_match:
                 metadata['title'] = title_match.group(1)
+                self.logger.debug(f"Extracted title from H1: {metadata['title']}")
         
         return content, metadata
     
+    def _create_heading_with_bookmark(self, text: str, style: ParagraphStyle, level: int):
+        """Create a heading paragraph with TOC bookmark."""
+        self.heading_counter += 1
+        bookmark_name = f"heading_{self.heading_counter}"
+        
+        # Create the paragraph with an anchor
+        para_text = f'<a name="{bookmark_name}"/>{text}'
+        para = Paragraph(para_text, style)
+        
+        # Add TOC entry information
+        para.__toc_entry__ = (level, text, bookmark_name)
+        
+        self.logger.debug(f"Created heading: Level {level}, Text: {text}, Bookmark: {bookmark_name}")
+        return para
+    
     def _process_markdown_to_story(self, content: str, toc: TableOfContents = None) -> List:
         """Process markdown content and convert to ReportLab story elements."""
-        import markdown
-        from bs4 import BeautifulSoup
+        self.logger.info("Processing markdown content to story elements")
         
         # Convert markdown to HTML
         md = markdown.Markdown(extensions=[
@@ -344,18 +462,19 @@ class DocumentBuilder:
         
         story = []
         
-        # Check if document has any headings and auto-generate TOC if native TOC provided
-        has_headings = bool(soup.find_all(['h1', 'h2', 'h3']))
+        # Check if document has any headings
+        headings = soup.find_all(['h1', 'h2', 'h3'])
+        has_headings = bool(headings)
+        self.logger.debug(f"Document has {len(headings)} headings")
         
-        # If headings exist and native TOC provided, automatically add TOC
+        # If headings exist and TOC provided, add it
         if has_headings and toc:
-            # Add TOC heading and native TableOfContents
+            self.logger.info("Adding Table of Contents to document")
             story.append(Paragraph("Table of Contents", self.styles['TOCHeading']))
             story.append(Spacer(1, 12))
-            story.append(toc)  # Add native TableOfContents
+            story.append(toc)
             story.append(PageBreak())
             
-            # Mark that we found a TOC section
             self._has_toc_section = True
             self._skip_manual_toc = True
         else:
@@ -365,10 +484,9 @@ class DocumentBuilder:
         # Process HTML elements
         skip_until_after_toc = self._skip_manual_toc
         
-        # Process HTML elements
         for element in soup.children:
             if hasattr(element, 'name'):
-                # Skip manual TOC sections
+                # Skip manual TOC sections if we added our own
                 if skip_until_after_toc:
                     if element.name in ['h1', 'h2', 'h3']:
                         text = element.get_text().lower()
@@ -379,81 +497,61 @@ class DocumentBuilder:
                         else:
                             continue
                     elif element.name in ['ol', 'ul'] and skip_until_after_toc:
-                        # Skip the TOC list
                         continue
                     else:
                         continue
                 
+                # Process headings with TOC support
                 if element.name == 'h1':
                     text = element.get_text()
-                    # Add TOC entry for H1 headings if native TOC provided
-                    if toc:
-                        toc.addEntry(0, text, len(story))  # Level 0 for H1
-                    para = Paragraph(text, self.styles['CustomHeading1'])
+                    para = self._create_heading_with_bookmark(text, self.styles['CustomHeading1'], 0)
                     story.append(para)
                     story.append(Spacer(1, 0.2*inch))
-                        
+                    
                 elif element.name == 'h2':
                     text = element.get_text()
-                    # Add TOC entry for H2 headings if native TOC provided
-                    if toc:
-                        toc.addEntry(1, text, len(story))  # Level 1 for H2
-                    para = Paragraph(text, self.styles['CustomHeading2'])
+                    para = self._create_heading_with_bookmark(text, self.styles['CustomHeading2'], 1)
                     story.append(para)
                     story.append(Spacer(1, 0.15*inch))
-                        
+                    
                 elif element.name == 'h3':
                     text = element.get_text()
-                    # Add TOC entry for H3 headings if native TOC provided
-                    if toc:
-                        toc.addEntry(2, text, len(story))  # Level 2 for H3
-                    para = Paragraph(text, self.styles['CustomHeading3'])
+                    para = self._create_heading_with_bookmark(text, self.styles['CustomHeading3'], 2)
                     story.append(para)
                     story.append(Spacer(1, 0.1*inch))
                 
                 elif element.name == 'p':
-                    # Check if paragraph contains images - handle them separately
+                    # Skip paragraphs containing images
                     if element.find('img'):
-                        # Skip paragraphs containing images for now
-                        # Images should be handled as separate elements, not inline
                         continue
                     
-                    # Get paragraph text and clean problematic HTML attributes
+                    # Get paragraph text and clean HTML attributes
                     para_text = str(element)
                     
-                    # Remove problematic attributes that ReportLab can't handle
-                    # Remove id attributes from footnote links
+                    # Remove problematic attributes
                     para_text = re.sub(r'\s*id="[^"]*"', '', para_text)
                     para_text = re.sub(r'\s*class="[^"]*"', '', para_text)
                     
-                    # Convert footnote references to simple superscript numbers
-                    # Replace <sup id="fnref:1"><a class="footnote-ref" href="#fn:1">1</a></sup> with <sup>1</sup>
+                    # Convert footnote references
                     para_text = re.sub(r'<sup[^>]*><a[^>]*>(\d+)</a></sup>', r'<sup>\1</sup>', para_text)
                     
-                    # Check if paragraph contains code elements
+                    # Check for code elements
                     if element.find('code'):
-                        # Process each part of the paragraph
                         para_parts = []
-                        # Split by code tags and process
                         parts = re.split(r'(<code>.*?</code>)', para_text)
                         code_count = 0
                         for part in parts:
                             if part.startswith('<code>') and part.endswith('</code>'):
                                 code_count += 1
-                                # Extract code content
-                                code_content = part[6:-7]  # Remove <code> and </code>
-                                # Create inline code with terminal-like green color on dark background effect
-                                # Using Courier-Bold and bright green to simulate terminal
+                                code_content = part[6:-7]
                                 para_parts.append(f'<font name="Courier-Bold" size="10" color="#00c853">{code_content}</font>')
                             elif part:
                                 para_parts.append(part)
                         
                         combined_text = ''.join(para_parts)
                         
-                        # Use left alignment if paragraph has many code elements to avoid bad spacing
-                        # Changed threshold from 3 to 2 for better handling
-                        if code_count >= 2:  # If 2 or more code snippets, use left align
-                            # Create a copy of the body style with left alignment
+                        # Use left alignment if multiple code elements
+                        if code_count >= 2:
                             left_style = ParagraphStyle(
                                 'TempLeft',
                                 parent=self.styles['CustomBody'],
@@ -463,8 +561,8 @@ class DocumentBuilder:
                         else:
                             story.append(Paragraph(combined_text, self.styles['CustomBody']))
                     else:
-                        # Check if paragraph is short (might cause bad justification)
-                        if len(para_text) < 150:  # Short paragraphs look bad justified
+                        # Check paragraph length for justification
+                        if len(para_text) < 150:
                             left_style = ParagraphStyle(
                                 'TempLeft',
                                 parent=self.styles['CustomBody'],
@@ -473,39 +571,34 @@ class DocumentBuilder:
                             story.append(Paragraph(para_text, left_style))
                         else:
                             story.append(Paragraph(para_text, self.styles['CustomBody']))
+                            
                 elif element.name == 'pre':
-                    # Code block with terminal styling
+                    # Code block processing
                     code_text = element.get_text().strip()
                     
-                    # Check if this is actually a code block or just preformatted text
-                    # Look for code tag inside pre or div with highlight class
                     code_elem = element.find('code')
                     if code_elem:
                         code_text = code_elem.get_text().strip()
                     
-                    # Create terminal-style code block
-                    # Split long code blocks into smaller chunks to avoid page breaks
+                    # Process code lines
                     lines = code_text.split('\n')
-                    
-                    # Add the code block with proper styling
                     code_lines = []
                     for line in lines:
-                        if line.strip():  # Skip empty lines
-                            # Escape XML characters
+                        if line.strip():
                             line = line.replace('&', '&amp;')
                             line = line.replace('<', '&lt;')
                             line = line.replace('>', '&gt;')
                             code_lines.append(line)
                         else:
-                            code_lines.append('')  # Keep empty lines for spacing
+                            code_lines.append('')
                     
-                    # Join lines and create paragraph with code style
                     if code_lines:
                         code_content = '<br/>'.join(code_lines)
                         story.append(Paragraph(code_content, self.styles['CustomCode']))
                         story.append(Spacer(1, 0.1*inch))
+                        
                 elif element.name == 'div' and 'highlight' in element.get('class', []):
-                    # Handle highlighted code blocks from codehilite
+                    # Handle highlighted code blocks
                     code_elem = element.find('pre')
                     if code_elem:
                         code_text = code_elem.get_text().strip()
@@ -524,16 +617,19 @@ class DocumentBuilder:
                             code_content = '<br/>'.join(code_lines)
                             story.append(Paragraph(code_content, self.styles['CustomCode']))
                             story.append(Spacer(1, 0.1*inch))
+                            
                 elif element.name == 'blockquote':
                     quote_text = element.get_text()
                     story.append(Paragraph(quote_text, self.styles['CustomQuote']))
                     story.append(Spacer(1, 0.1*inch))
+                    
                 elif element.name == 'ul' or element.name == 'ol':
                     for idx, li in enumerate(element.find_all('li', recursive=False), 1):
                         bullet = '• ' if element.name == 'ul' else f'{idx}. '
                         text = bullet + li.get_text()
                         story.append(Paragraph(text, self.styles['CustomBody']))
                     story.append(Spacer(1, 0.1*inch))
+                    
                 elif element.name == 'table':
                     # Process tables
                     table_data = []
@@ -561,30 +657,31 @@ class DocumentBuilder:
                         story.append(t)
                         story.append(Spacer(1, 0.2*inch))
         
+        self.logger.info(f"Generated {len(story)} story elements")
         return story
     
     def _create_cover_page(self, canvas_obj, doc, metadata: Dict[str, str]):
         """Create a cover page for the document."""
+        self.logger.debug("Creating cover page")
         canvas_obj.saveState()
         
         # Set page size
         width, height = A4
         
-        # Define margins (1 inch = 72 points)
-        margin = 1 * inch  # 1 inch margins on all sides
+        # Define margins
+        margin = 1 * inch
         usable_width = width - (2 * margin)
         
         # Add logo if exists
         logo_path = self.assets_dir / "GerdsenAI_Neural_G_Invoice.png"
-        logo_bottom = height - 3.5 * inch  # Position where logo ends
+        logo_bottom = height - 3.5 * inch
         
         if logo_path.exists():
             try:
                 img = Image.open(logo_path)
                 aspect = img.height / img.width
-                img_width = 2.5 * inch  # Smaller logo
+                img_width = 2.5 * inch
                 img_height = img_width * aspect
-                # Center the logo
                 canvas_obj.drawImage(
                     str(logo_path),
                     (width - img_width) / 2,
@@ -594,25 +691,23 @@ class DocumentBuilder:
                     preserveAspectRatio=True,
                     mask='auto'
                 )
-                logo_bottom = height - 2 * inch - img_height - 1.5 * inch  # Added more space (1.5 inches)
+                logo_bottom = height - 2 * inch - img_height - 1.5 * inch
+                self.logger.debug("Logo added to cover page")
             except Exception as e:
-                print(f"Warning: Could not add logo: {e}")
+                self.logger.warning(f"Could not add logo: {e}")
         
-        # Title - positioned below the logo with proper wrapping
+        # Title
         title = metadata.get('title', 'Untitled Document')
         
-        # Calculate maximum characters per line based on font size and usable width
-        # Using a more accurate calculation for Helvetica-Bold at 28pt
-        # Approximate character width is about 0.6 of font size for Helvetica-Bold
-        title_font_size = 28
-        char_width = title_font_size * 0.6  # in points
-        max_chars = int(usable_width / char_width * 1.8)  # Adjusted multiplier for better fit
-        
-        # Word wrap the title within the margins
+        # Word wrap the title
         import textwrap
+        title_font_size = 28
+        char_width = title_font_size * 0.6
+        max_chars = int(usable_width / char_width * 1.8)
+        
         lines = textwrap.wrap(title, width=max_chars, break_long_words=False)
         
-        # Determine if we need to use a smaller font for all lines to maintain consistency
+        # Check if we need smaller font
         use_smaller_font = False
         for line in lines:
             test_width = canvas_obj.stringWidth(line, 'Helvetica-Bold', title_font_size)
@@ -620,28 +715,25 @@ class DocumentBuilder:
                 use_smaller_font = True
                 break
         
-        # Set consistent font size for all title lines
         if use_smaller_font:
             title_font_size = 24
         
         canvas_obj.setFont('Helvetica-Bold', title_font_size)
         canvas_obj.setFillColor(colors.HexColor('#1a1a1a'))
         
-        # Start title below logo
+        # Draw title lines
         y_position = logo_bottom
         line_height = 0.4 * inch
         
-        # Draw all title lines with the same font size
         for line in lines:
             canvas_obj.drawCentredString(width / 2, y_position, line)
             y_position -= line_height
         
         # Subtitle if present
         if metadata.get('subtitle'):
-            y_position -= 0.2 * inch  # Extra space before subtitle
+            y_position -= 0.2 * inch
             canvas_obj.setFont('Helvetica', 16)
             canvas_obj.setFillColor(colors.HexColor('#666666'))
-            # Calculate max chars for subtitle
             subtitle_char_width = 16 * 0.5
             subtitle_max_chars = int(usable_width / subtitle_char_width * 1.8)
             subtitle_lines = textwrap.wrap(metadata['subtitle'], width=subtitle_max_chars)
@@ -649,14 +741,12 @@ class DocumentBuilder:
                 canvas_obj.drawCentredString(width / 2, y_position, line)
                 y_position -= 0.3 * inch
         
-        # Author - centered in lower portion
+        # Author
         canvas_obj.setFont('Helvetica-Bold', 14)
         canvas_obj.setFillColor(colors.HexColor('#444444'))
         author_text = f"Prepared by {metadata.get('author', 'Unknown Author')}"
-        # Check if author text fits within margins
         author_width = canvas_obj.stringWidth(author_text, 'Helvetica-Bold', 14)
         if author_width > usable_width:
-            # Wrap author text if needed
             author_lines = textwrap.wrap(author_text, width=int(usable_width / 14 * 2))
             y_pos = 3 * inch
             for line in author_lines:
@@ -716,95 +806,140 @@ class DocumentBuilder:
     
     def build_document(self, input_file: str, output_file: Optional[str] = None) -> str:
         """Build a PDF document from input file."""
-        input_path = self.to_build_dir / input_file
+        self.logger.info("="*60)
+        self.logger.info(f"Building document: {input_file}")
         
-        if not input_path.exists():
-            raise FileNotFoundError(f"Input file not found: {input_path}")
-        
-        # Read content
-        with open(input_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        # Extract metadata
-        content, metadata = self._extract_metadata(content)
-        
-        # Generate output filename
-        if output_file is None:
-            base_name = input_path.stem
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            # Use filename prefix from config, default to empty string if not set
-            prefix = self.config.get('filename_prefix', '')
-            output_file = f"{prefix}{base_name}_{timestamp}.pdf"
-        
-        output_path = self.output_dir / output_file
-        
-        # Create PDF document
-        doc = SimpleDocTemplate(
-            str(output_path),
-            pagesize=A4,
-            rightMargin=self.config['margins']['right'] * mm,
-            leftMargin=self.config['margins']['left'] * mm,
-            topMargin=self.config['margins']['top'] * mm,
-            bottomMargin=self.config['margins']['bottom'] * mm,
-            title=metadata.get('title', 'Document'),
-            author=metadata.get('author', 'Unknown'),
-            subject=metadata.get('subject', ''),
-            creator='GerdsenAI Document Builder'
-        )
-        
-        # Store metadata in doc for access in callbacks
-        doc.metadata = metadata
-        
-        # Build story
-        story = []
-        
-        # Add cover page
-        story.append(PageBreak())
-        
-        # Create native TOC for markdown files
-        toc = None
-        if input_path.suffix == '.md':
-            toc = self._create_toc()
-        
-        # Process content
-        if input_path.suffix == '.md':
-            content_story = self._process_markdown_to_story(content, toc)
-            story.extend(content_story)
-        else:
-            # Plain text
-            paragraphs = content.split('\n\n')
-            for para in paragraphs:
-                if para.strip():
-                    story.append(Paragraph(para.replace('\n', '<br/>'), self.styles['CustomBody']))
-                    story.append(Spacer(1, 0.1*inch))
-        
-        # Build PDF with custom canvas
-        def on_every_page(canvas_obj, doc):
-            if doc.page == 1:
-                self._create_cover_page(canvas_obj, doc, metadata)
+        try:
+            input_path = self.to_build_dir / input_file
+            
+            if not input_path.exists():
+                error_msg = f"Input file not found: {input_path}"
+                self.logger.error(error_msg)
+                raise FileNotFoundError(error_msg)
+            
+            # Read content
+            self.logger.debug(f"Reading file: {input_path}")
+            with open(input_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Extract metadata
+            content, metadata = self._extract_metadata(content)
+            self.logger.info(f"Document title: {metadata.get('title', 'Untitled')}")
+            
+            # Generate output filename
+            if output_file is None:
+                base_name = input_path.stem
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                prefix = self.config.get('filename_prefix', '')
+                output_file = f"{prefix}{base_name}_{timestamp}.pdf"
+            
+            output_path = self.output_dir / output_file
+            self.logger.info(f"Output file: {output_path}")
+            
+            # Reset heading counter for new document
+            self.heading_counter = 0
+            
+            # Create TOC for markdown files
+            toc = None
+            if input_path.suffix == '.md':
+                toc = self._create_toc()
+                self.logger.debug("Created TOC for markdown document")
+            
+            # Create PDF document with custom template for TOC support
+            doc = TOCDocTemplate(
+                str(output_path),
+                pagesize=A4,
+                rightMargin=self.config['margins']['right'] * mm,
+                leftMargin=self.config['margins']['left'] * mm,
+                topMargin=self.config['margins']['top'] * mm,
+                bottomMargin=self.config['margins']['bottom'] * mm,
+                title=metadata.get('title', 'Document'),
+                author=metadata.get('author', 'Unknown'),
+                subject=metadata.get('subject', ''),
+                creator='GerdsenAI Document Builder',
+                toc=toc  # Pass TOC to the document template
+            )
+            
+            # Store metadata in doc
+            doc.metadata = metadata
+            
+            # Build story
+            story = []
+            
+            # Add cover page placeholder
+            story.append(PageBreak())
+            
+            # Process content
+            if input_path.suffix == '.md':
+                content_story = self._process_markdown_to_story(content, toc)
+                story.extend(content_story)
             else:
-                self._add_page_number(canvas_obj, doc)
-        
-        doc.build(story, onFirstPage=on_every_page, onLaterPages=on_every_page)
-        
-        print(f"✅ Successfully generated PDF: {output_path}")
-        return str(output_path)
+                # Plain text
+                self.logger.debug("Processing plain text document")
+                paragraphs = content.split('\n\n')
+                for para in paragraphs:
+                    if para.strip():
+                        story.append(Paragraph(para.replace('\n', '<br/>'), self.styles['CustomBody']))
+                        story.append(Spacer(1, 0.1*inch))
+            
+            # Build PDF with custom canvas for page tracking
+            def make_canvas(*args, **kwargs):
+                canv = NumberedCanvas(*args, **kwargs)
+                canv.toc = toc
+                return canv
+            
+            # Page handlers
+            def on_every_page(canvas_obj, doc):
+                if doc.page == 1:
+                    self._create_cover_page(canvas_obj, doc, metadata)
+                else:
+                    self._add_page_number(canvas_obj, doc)
+            
+            # Build with custom canvas
+            self.logger.info("Building PDF...")
+            doc.multiBuild(story, canvasmaker=make_canvas, onFirstPage=on_every_page, onLaterPages=on_every_page)
+            
+            self.logger.info(f"✅ Successfully generated PDF: {output_path}")
+            return str(output_path)
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error building document: {e}")
+            self.logger.error(traceback.format_exc())
+            raise
     
     def build_all_documents(self) -> List[str]:
         """Build all documents in the To_Build directory."""
+        self.logger.info("="*60)
+        self.logger.info("Building all documents")
+        
         output_files = []
+        success_count = 0
+        error_count = 0
         
         # Get all markdown and text files
-        for file_path in self.to_build_dir.glob('*'):
-            if file_path.suffix in ['.md', '.txt']:
-                try:
-                    print(f"📄 Building: {file_path.name}")
-                    output = self.build_document(file_path.name)
-                    output_files.append(output)
-                except Exception as e:
-                    print(f"❌ Error building {file_path.name}: {e}")
-                    import traceback
-                    traceback.print_exc()
+        files = list(self.to_build_dir.glob('*'))
+        valid_files = [f for f in files if f.suffix in ['.md', '.txt']]
+        
+        self.logger.info(f"Found {len(valid_files)} documents to build")
+        
+        for file_path in valid_files:
+            try:
+                self.logger.info(f"📄 Building: {file_path.name}")
+                output = self.build_document(file_path.name)
+                output_files.append(output)
+                success_count += 1
+            except Exception as e:
+                error_count += 1
+                self.logger.error(f"❌ Error building {file_path.name}: {e}")
+                self.logger.error(traceback.format_exc())
+        
+        # Summary
+        self.logger.info("="*60)
+        self.logger.info(f"Build Summary:")
+        self.logger.info(f"  ✅ Successful: {success_count}")
+        self.logger.info(f"  ❌ Failed: {error_count}")
+        self.logger.info(f"  📄 Total: {len(valid_files)}")
+        self.logger.info("="*60)
         
         return output_files
 
@@ -849,8 +984,7 @@ def main():
             
     except Exception as e:
         print(f"❌ Error: {e}")
-        import traceback
-        traceback.print_exc()
+        logging.getLogger('DocumentBuilder').error(traceback.format_exc())
         sys.exit(1)
 
 

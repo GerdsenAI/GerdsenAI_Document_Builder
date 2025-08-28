@@ -96,6 +96,14 @@ PDFs/*.pdf
 temp/
 tmp/
 
+# Logs Directory
+Logs/
+logs/
+*.log
+*.log.*
+debug.log
+error.log
+
 # Config files with sensitive data
 config_local.yaml
 secrets.yaml
