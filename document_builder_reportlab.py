@@ -891,7 +891,8 @@ class DocumentBuilder:
             
             # Create TOC for markdown files
             toc = None
-            if input_path.suffix == '.md':
+            suffix_lower = input_path.suffix.lower()
+            if suffix_lower in ('.md', '.markdown'):
                 toc = self._create_toc()
                 self.logger.debug("Created TOC for markdown document")
             
@@ -920,7 +921,8 @@ class DocumentBuilder:
             story.append(PageBreak())
             
             # Process content
-            if input_path.suffix == '.md':
+            suffix_lower = input_path.suffix.lower()
+            if suffix_lower in ('.md', '.markdown'):
                 content_story = self._process_markdown_to_story(content, toc)
                 story.extend(content_story)
             else:
@@ -968,7 +970,7 @@ class DocumentBuilder:
         
         # Get all markdown and text files
         files = list(self.to_build_dir.glob('*'))
-        valid_files = [f for f in files if f.suffix in ['.md', '.txt']]
+        valid_files = [f for f in files if f.suffix.lower() in {'.md', '.markdown', '.txt'}]
         
         self.logger.info(f"Found {len(valid_files)} documents to build")
         
