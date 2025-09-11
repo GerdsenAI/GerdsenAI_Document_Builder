@@ -111,6 +111,17 @@ class TOCDocTemplate(SimpleDocTemplate):
         
     def afterFlowable(self, flowable):
         """Called after each flowable is rendered."""
+        # Create bookmark if the flowable has a bookmark name
+        if hasattr(flowable, '_bookmarkName'):
+            bookmark_name = flowable._bookmarkName
+            # Create a bookmark at the current position in the PDF
+            self.canv.bookmarkPage(bookmark_name)
+            # Add to outline (PDF bookmarks visible in PDF readers)
+            if hasattr(flowable, '__toc_entry__'):
+                level, text, _ = flowable.__toc_entry__
+                self.canv.addOutlineEntry(text, bookmark_name, level=level)
+            self.logger.debug(f"Created bookmark: {bookmark_name}")
+        
         # Check if this is a heading with TOC entry
         if hasattr(flowable, '__toc_entry__'):
             level, text, bookmark = flowable.__toc_entry__
@@ -335,7 +346,7 @@ class DocumentBuilder:
                 leftIndent=0,
                 rightIndent=30,
                 spaceAfter=6,
-                textColor=colors.HexColor('#1a1a1a')
+                textColor=colors.HexColor('#0066cc')  # Blue for links
             ),
             'TOCEntry2': ParagraphStyle(
                 'TOCEntry2',
@@ -345,7 +356,7 @@ class DocumentBuilder:
                 leftIndent=20,
                 rightIndent=30,
                 spaceAfter=4,
-                textColor=colors.HexColor('#333333')
+                textColor=colors.HexColor('#0066cc')  # Blue for links
             ),
             'TOCEntry3': ParagraphStyle(
                 'TOCEntry3',
@@ -355,7 +366,7 @@ class DocumentBuilder:
                 leftIndent=40,
                 rightIndent=30,
                 spaceAfter=3,
-                textColor=colors.HexColor('#666666')
+                textColor=colors.HexColor('#0066cc')  # Blue for links
             )
         }
         
@@ -377,6 +388,9 @@ class DocumentBuilder:
         ]
         # Configure dots
         toc.dotsMinLevel = 0  # Show dots for all levels
+        
+        # The TOC will automatically use bookmarks created by afterFlowable
+        # No need to override internal methods
         return toc
     
     def _extract_metadata(self, content: str) -> Tuple[str, Dict[str, str]]:
@@ -415,9 +429,11 @@ class DocumentBuilder:
         self.heading_counter += 1
         bookmark_name = f"heading_{self.heading_counter}"
         
-        # Create the paragraph with an anchor
-        para_text = f'<a name="{bookmark_name}"/>{text}'
-        para = Paragraph(para_text, style)
+        # Create the paragraph without HTML anchor (we'll use ReportLab bookmarks)
+        para = Paragraph(text, style)
+        
+        # Add bookmark name for internal PDF navigation
+        para._bookmarkName = bookmark_name
         
         # Add TOC entry information
         para.__toc_entry__ = (level, text, bookmark_name)
@@ -482,24 +498,25 @@ class DocumentBuilder:
             self._skip_manual_toc = False
         
         # Process HTML elements
-        skip_until_after_toc = self._skip_manual_toc
+        skip_manual_toc_section = False
         
         for element in soup.children:
             if hasattr(element, 'name'):
-                # Skip manual TOC sections if we added our own
-                if skip_until_after_toc:
-                    if element.name in ['h1', 'h2', 'h3']:
-                        text = element.get_text().lower()
-                        if 'table of contents' in text:
-                            continue
-                        elif any(keyword in text for keyword in ['executive summary', 'introduction', 'go2 series', 'chapter', 'section']):
-                            skip_until_after_toc = False
-                        else:
-                            continue
-                    elif element.name in ['ol', 'ul'] and skip_until_after_toc:
+                # Check if this is a manual TOC section to skip
+                if element.name in ['h1', 'h2', 'h3']:
+                    text = element.get_text().lower()
+                    # Start skipping if we encounter a "table of contents" heading
+                    if 'table of contents' in text and self._has_toc_section:
+                        skip_manual_toc_section = True
                         continue
-                    else:
-                        continue
+                    # Stop skipping once we hit the next major section
+                    elif skip_manual_toc_section:
+                        skip_manual_toc_section = False
+                        # Don't skip this heading - process it normally
+                
+                # Skip list items that are part of a manual TOC
+                if skip_manual_toc_section and element.name in ['ol', 'ul']:
+                    continue
                 
                 # Process headings with TOC support
                 if element.name == 'h1':
