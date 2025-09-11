@@ -821,13 +821,46 @@ class DocumentBuilder:
         
         canvas_obj.restoreState()
     
+    def _resolve_input_path(self, input_file: str) -> Path:
+        """Resolve input file path with robust handling of different path formats."""
+        self.logger.debug(f"Resolving input path for: {input_file}")
+        
+        # Convert to Path object
+        input_path = Path(input_file)
+        
+        # Case 1: Absolute path - use directly
+        if input_path.is_absolute():
+            self.logger.debug(f"Using absolute path: {input_path}")
+            return input_path
+        
+        # Case 2: Relative path that exists as-is - use directly
+        if input_path.exists():
+            self.logger.debug(f"Using existing relative path: {input_path}")
+            return input_path.resolve()
+        
+        # Case 3: Path already includes To_Build/ - avoid double-prepending
+        if str(input_path).startswith('To_Build/') or str(input_path).startswith('TO_Build/'):
+            # Remove the To_Build prefix and treat as bare filename
+            parts = input_path.parts
+            if len(parts) > 1:
+                filename = parts[-1]  # Get just the filename
+                resolved_path = self.to_build_dir / filename
+                self.logger.debug(f"Removed To_Build prefix, using: {resolved_path}")
+                return resolved_path
+        
+        # Case 4: Bare filename - prepend To_Build directory
+        resolved_path = self.to_build_dir / input_file
+        self.logger.debug(f"Using To_Build directory path: {resolved_path}")
+        return resolved_path
+    
     def build_document(self, input_file: str, output_file: Optional[str] = None) -> str:
         """Build a PDF document from input file."""
         self.logger.info("="*60)
         self.logger.info(f"Building document: {input_file}")
         
         try:
-            input_path = self.to_build_dir / input_file
+            # Robust input path resolution
+            input_path = self._resolve_input_path(input_file)
             
             if not input_path.exists():
                 error_msg = f"Input file not found: {input_path}"
