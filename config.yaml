@@ -74,10 +74,35 @@ syntax_highlighting:
   theme: "github"  # Options: github, monokai, dracula, tomorrow
   line_numbers: false
 
-# Mermaid diagram settings
+# Mermaid diagram settings (local rendering via Playwright)
 mermaid:
-  theme: "default"  # Options: default, dark, forest, neutral
-  background: "transparent"
+  enabled: true  # Enable Mermaid diagram rendering
+  
+  # Rendering settings
+  theme: "default"  # Options: default, dark, forest, neutral, base
+  background: "white"  # white, transparent, or hex color (#ffffff)
+  
+  # Viewport for rendering (affects diagram quality and detail)
+  viewport_width: 1200
+  viewport_height: 800
+  
+  # PDF sizing
+  max_width_percent: 95  # Percentage of page width (after margins)
+  
+  # Auto-fix settings (NEW)
+  auto_fix_edge_cases: true  # Automatically fix common diagram issues
+  max_label_length: 80  # Maximum characters per line in labels
+  show_fix_warnings: true  # Show console warnings when fixes are applied
+  
+  # Error handling
+  fallback_to_code: true  # Show as code block if rendering fails
+  fallback_to_simplified: true  # Try simplified diagram if normal rendering fails
+  prompt_before_simplified: false  # Ask user before rendering simplified version (set false for automation)
+  auto_accept_simplified: true  # Automatically use simplified rendering without prompting
+  
+  # Advanced Mermaid configuration
+  flow_curve: "basis"  # Options: basis, linear, cardinal
+  sequence_diagram_actors: true
   
 # Export settings
 export:

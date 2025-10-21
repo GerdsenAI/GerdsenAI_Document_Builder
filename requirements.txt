@@ -17,5 +17,12 @@ Pillow>=10.0.0
 # Configuration
 pyyaml>=6.0
 
+# Mermaid Diagram Rendering (local, no API required)
+mermaid-cli>=0.1.2
+playwright>=1.40.0
+
+# HTTP requests (for potential fallback scenarios)
+requests>=2.31.0
+
 # Optional for development
 watchdog>=3.0.0  # File system monitoring

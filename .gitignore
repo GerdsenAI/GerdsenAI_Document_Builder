@@ -40,7 +40,12 @@ ${*}/
 $*PATH/
 
 # IDE and Editors  
-.vscode/
+# Allow workspace config files but ignore user-specific files
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
 .idea/
 *.swp
 *.swo
