@@ -477,6 +477,28 @@ class DocumentBuilder:
         mermaid_config = self.config.get("mermaid", {})
         max_label_length = mermaid_config.get("max_label_length", 80)
 
+        # Edge Case 0: REMOVE ALL EMOJIS (they break Mermaid parsing!)
+        # This is the FIRST thing we do - emojis cause parse errors
+        emoji_pattern = re.compile(
+            "["
+            "\U0001f600-\U0001f64f"  # emoticons
+            "\U0001f300-\U0001f5ff"  # symbols & pictographs
+            "\U0001f680-\U0001f6ff"  # transport & map symbols
+            "\U0001f1e0-\U0001f1ff"  # flags (iOS)
+            "\U00002702-\U000027b0"
+            "\U000024c2-\U0001f251"
+            "\U0001f900-\U0001f9ff"  # supplemental symbols
+            "\U0001fa00-\U0001faff"  # more symbols
+            "]+",
+            flags=re.UNICODE,
+        )
+
+        emoji_count = len(emoji_pattern.findall(mermaid_code))
+        if emoji_count > 0:
+            mermaid_code = emoji_pattern.sub("", mermaid_code)
+            fixes_applied.append(f"Removed {emoji_count} emojis (cause parse errors)")
+            self.logger.debug(f"Stripped {emoji_count} emojis from Mermaid diagram")
+
         # Edge Case 1: Multi-line text in node labels WITH quotes (splitLineToFitWidth error)
         # This is the most common issue - replace ALL newlines inside quotes with <br/>
         # This includes newlines after existing <br/> tags
@@ -536,8 +558,91 @@ class DocumentBuilder:
             r'\("([^"]*?)"\)', replace_multiline_parens, mermaid_code, flags=re.DOTALL
         )
 
-        # Edge Case 4: Edge/Arrow labels (CRITICAL - this was missing!)
-        # Formats: -->|"label"|, ---|"label"|, ==>|"label"|, -.->|"label"|
+        # Edge Case 4: Edge/Arrow labels (CRITICAL - MOST COMMON ERROR!)
+        # The TabX diagrams have INVALID double-arrow syntax like:
+        # WRONG:  -->|-->"label"|-->
+        # WRONG:  -->|-->label|-->
+        # RIGHT:  -->|"label"|
+
+        arrow_token = r"(?:--?>|===?>|\.\.\.>|-\.-?>|-\.->|---)"
+
+        def strip_internal_arrow(match: re.Match) -> str:
+            """Remove stray arrows inside edge labels and ensure quoting."""
+            label = match.group("label").strip()
+            if not (label.startswith('"') and label.endswith('"')):
+                label = f'"{label}"'
+            if "Fixed triple-arrow edge labels (invalid syntax)" not in fixes_applied:
+                fixes_applied.append("Fixed triple-arrow edge labels (invalid syntax)")
+            return f"|{label}|"
+
+        # Remove arrows that appear between the pipes of an edge label
+        mermaid_code = re.sub(
+            rf"\|\s*{arrow_token}\s*(?P<label>\"[^\"]*\"|[^|\"]+?)\|",
+            strip_internal_arrow,
+            mermaid_code,
+            flags=re.DOTALL,
+        )
+
+        def strip_trailing_arrow(match: re.Match) -> str:
+            """Remove stray arrows appearing immediately after a labelled edge."""
+            spacing = match.group("spacing") or " "
+            if "Fixed triple-arrow edge labels (invalid syntax)" not in fixes_applied:
+                fixes_applied.append("Fixed triple-arrow edge labels (invalid syntax)")
+            return f"|{spacing}"
+
+        # Remove arrows that appear immediately after a labelled edge (e.g. |--> Node)
+        mermaid_code = re.sub(
+            rf"\|\s*{arrow_token}(?P<spacing>\s*)",
+            strip_trailing_arrow,
+            mermaid_code,
+        )
+
+        def fix_all_edge_label_issues(match):
+            """Clean up edge labels: remove arrows, ensure quotes."""
+            arrow_before = match.group(1)  # Arrow before first pipe
+            content = match.group(2)  # Everything between pipes
+
+            # Remove ALL arrows from content (leading/trailing, with/without spaces)
+            cleaned = content
+            cleaned = re.sub(
+                r"^(?:--?>|===?>|\.\.\.>|-\.-?>|-\.->|---)\s*", "", cleaned
+            )
+            cleaned = re.sub(
+                r"\s*(?:--?>|===?>|\.\.\.>|-\.-?>|-\.->|---)$", "", cleaned
+            )
+            cleaned = cleaned.strip()
+
+            # Ensure content is quoted
+            if not (cleaned.startswith('"') and cleaned.endswith('"')):
+                cleaned = f'"{cleaned}"'
+
+            result = f"{arrow_before}|{cleaned}|"
+
+            if content != cleaned:  # Only log if we made changes
+                if (
+                    "Fixed double-arrow edge labels (invalid syntax)"
+                    not in fixes_applied
+                ):
+                    fixes_applied.append(
+                        "Fixed double-arrow edge labels (invalid syntax)"
+                    )
+
+            return result
+
+        # Match: arrow + pipe + ANY content + pipe
+        # The [^|\n]+? will match anything except pipes or newlines
+        before_edge_fix = mermaid_code
+        mermaid_code = re.sub(
+            r"((?:--?>|===?>|\.\.\.>|-\.-?>|-\.->|---))\|([^|\n]+?)\|",
+            fix_all_edge_label_issues,
+            mermaid_code,
+        )
+        if (
+            before_edge_fix != mermaid_code
+            and "Fixed double-arrow edge labels (invalid syntax)" not in fixes_applied
+        ):
+            fixes_applied.append("Fixed double-arrow edge labels (invalid syntax)")
+
         def replace_multiline_edge_labels(match):
             arrow_type = match.group(1)
             label_content = match.group(2)
@@ -555,7 +660,7 @@ class DocumentBuilder:
                     )
             return f'{arrow_type}|"{label_content}"|'
 
-        # Match various arrow types with labels
+        # Match various arrow types with quoted labels
         # Covers: -->|, ---|, ==>|, -.->|, -.-|, etc.
         mermaid_code = re.sub(
             r'((?:--?>|===?>|\.\.\.>|-\.-?>|-\.->|---))\|"([^"]*?)"\|',
@@ -586,6 +691,7 @@ class DocumentBuilder:
         # Edge Case 6: Very long labels (auto-wrap at word boundaries)
         def handle_long_labels(match):
             label = match.group(1)
+            original_length = len(label)  # Store original length before modification
 
             if len(label) > max_label_length and "<br/>" not in label:
                 words = label.split()
@@ -607,7 +713,7 @@ class DocumentBuilder:
 
                 label = "<br/>".join(lines)
                 fixes_applied.append(
-                    f"Wrapped long label ({len(match.group(1))} chars -> {len(lines)} lines)"
+                    f"Wrapped long label ({original_length} chars -> {len(lines)} lines)"
                 )
 
             return f'["{label}"]'
@@ -628,9 +734,10 @@ class DocumentBuilder:
         mermaid_code = "\n".join(cleaned_lines)
 
         # Edge Case 8: Invalid arrow syntax
+        # NOTE: Do NOT add --> after | in edge labels (-->|"label"| is correct, NOT -->|"label"|-->)
         arrow_fixes = {
             r"-->\s*\|": ("-->|", "Fixed arrow syntax (space before pipe)"),
-            r"\|(?![-=])": ("|-->", "Fixed incomplete arrow"),
+            # REMOVED: r"\|(?![-=])": ("|-->", "Fixed incomplete arrow"),  # This breaks edge labels!
         }
 
         for pattern, (replacement, description) in arrow_fixes.items():
