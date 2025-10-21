@@ -96,6 +96,9 @@ PDFs/*.pdf
 temp/
 tmp/
 
+# To Build Directory
+To_Build
+
 # Logs Directory
 Logs/
 logs/
