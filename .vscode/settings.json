@@ -1,0 +1,50 @@
+{
+    // Python interpreter - auto-detects venv in project root
+    "python.defaultInterpreterPath": "${workspaceFolder}/venv/bin/python",
+    
+    // Terminal activation (auto-activates venv when opening terminal)
+    "python.terminal.activateEnvironment": true,
+    "python.terminal.activateEnvInCurrentTerminal": true,
+    
+    // Linting and formatting
+    "python.linting.enabled": true,
+    "python.linting.pylintEnabled": false,
+    "python.linting.flake8Enabled": true,
+    "python.formatting.provider": "black",
+    
+    // Type checking and IntelliSense
+    "python.analysis.typeCheckingMode": "basic",
+    "python.analysis.autoImportCompletions": true,
+    "python.analysis.autoSearchPaths": true,
+    "python.analysis.useLibraryCodeForTypes": true,
+    
+    // Auto-save
+    "files.autoSave": "afterDelay",
+    "files.autoSaveDelay": 1000,
+    
+    // Exclude from file watcher (performance)
+    "files.watcherExclude": {
+        "**/.git/objects/**": true,
+        "**/venv/**": true,
+        "**/env/**": true,
+        "**/__pycache__/**": true,
+        "**/Logs/**": true,
+        "**/PDFs/**": true
+    },
+    
+    // Python-specific exclusions
+    "python.analysis.exclude": [
+        "**/venv/**",
+        "**/__pycache__/**",
+        "**/Logs/**"
+    ],
+    
+    // Editor settings for Python
+    "editor.formatOnSave": true,
+    "[python]": {
+        "editor.defaultFormatter": "ms-python.black-formatter",
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit"
+        }
+    }
+}
