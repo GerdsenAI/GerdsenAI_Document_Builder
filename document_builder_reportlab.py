@@ -307,6 +307,36 @@ class DocumentBuilder:
                 leftIndent=0,
                 rightIndent=0,
             ),
+            "TableCell": ParagraphStyle(
+                "TableCell",
+                parent=styles["BodyText"],
+                fontName="Helvetica",
+                fontSize=8.5,
+                textColor=colors.HexColor("#2c3e50"),
+                alignment=TA_LEFT,
+                spaceBefore=0,
+                spaceAfter=0,
+                leading=11,
+                wordWrap="LTR",
+                splitLongWords=1,
+                leftIndent=0,
+                rightIndent=0,
+            ),
+            "TableCellHeader": ParagraphStyle(
+                "TableCellHeader",
+                parent=styles["BodyText"],
+                fontName="Helvetica-Bold",
+                fontSize=8.5,
+                textColor=colors.HexColor("#1a1a1a"),
+                alignment=TA_LEFT,
+                spaceBefore=0,
+                spaceAfter=0,
+                leading=11,
+                wordWrap="LTR",
+                splitLongWords=1,
+                leftIndent=0,
+                rightIndent=0,
+            ),
             "CustomCode": ParagraphStyle(
                 "CustomCode",
                 parent=styles["Code"],
@@ -1663,46 +1693,118 @@ class DocumentBuilder:
                     story.append(Spacer(1, 0.1 * inch))
 
                 elif element.name == "table":
-                    # Process tables
-                    table_data = []
+                    # Process tables with width-fitting and text wrapping
+                    raw_rows = []
                     for row in element.find_all("tr"):
                         row_data = []
                         for cell in row.find_all(["th", "td"]):
                             row_data.append(cell.get_text())
-                        table_data.append(row_data)
+                        raw_rows.append(row_data)
 
-                    if table_data:
-                        t = Table(table_data)
+                    if raw_rows:
+                        num_cols = max(len(r) for r in raw_rows)
+
+                        # Pad short rows so every row has the same column count
+                        for r in raw_rows:
+                            while len(r) < num_cols:
+                                r.append("")
+
+                        # Available page width (points)
+                        available_width = A4[0] - (
+                            self.config["margins"]["left"]
+                            + self.config["margins"]["right"]
+                        ) * mm
+
+                        # For wide tables (>6 cols), use a smaller font
+                        if num_cols > 6:
+                            cell_style = ParagraphStyle(
+                                "TableCellSmall",
+                                parent=self.styles["TableCell"],
+                                fontSize=7.5,
+                                leading=10,
+                            )
+                            header_style = ParagraphStyle(
+                                "TableCellHeaderSmall",
+                                parent=self.styles["TableCellHeader"],
+                                fontSize=7.5,
+                                leading=10,
+                            )
+                        else:
+                            cell_style = self.styles["TableCell"]
+                            header_style = self.styles["TableCellHeader"]
+
+                        # Measure natural column widths (approximate)
+                        char_width = cell_style.fontSize * 0.5
+                        natural_widths = [0.0] * num_cols
+                        for r in raw_rows:
+                            for ci, val in enumerate(r):
+                                w = len(val) * char_width + 12  # 12pt padding
+                                if w > natural_widths[ci]:
+                                    natural_widths[ci] = w
+
+                        total_natural = sum(natural_widths)
+                        min_col_width = 40  # points
+
+                        if total_natural <= available_width:
+                            col_widths = natural_widths
+                        else:
+                            # Scale proportionally, respecting minimum
+                            col_widths = [
+                                max(min_col_width, w * available_width / total_natural)
+                                for w in natural_widths
+                            ]
+                            # If minimums pushed total over budget, re-scale the non-minimum cols
+                            total_after = sum(col_widths)
+                            if total_after > available_width:
+                                excess = total_after - available_width
+                                scalable = [
+                                    i for i, w in enumerate(col_widths) if w > min_col_width
+                                ]
+                                scalable_total = sum(col_widths[i] for i in scalable)
+                                if scalable_total > 0:
+                                    for i in scalable:
+                                        col_widths[i] -= excess * (col_widths[i] / scalable_total)
+                                        col_widths[i] = max(min_col_width, col_widths[i])
+
+                        # Wrap cell text in Paragraph objects for word-wrapping
+                        table_data = []
+                        for ri, r in enumerate(raw_rows):
+                            styled_row = []
+                            is_header = ri == 0
+                            style = header_style if is_header else cell_style
+                            for val in r:
+                                # Escape XML entities for ReportLab Paragraph
+                                safe = (
+                                    val.replace("&", "&amp;")
+                                    .replace("<", "&lt;")
+                                    .replace(">", "&gt;")
+                                )
+                                styled_row.append(Paragraph(safe, style))
+                            table_data.append(styled_row)
+
+                        # Config colors with fallbacks
+                        color_cfg = self.config.get("colors", {})
+                        header_bg = colors.HexColor(
+                            color_cfg.get("table_header", "#f6f8fa")
+                        )
+                        border_color = colors.HexColor(
+                            color_cfg.get("table_border", "#e1e4e8")
+                        )
+
+                        t = Table(table_data, colWidths=col_widths)
                         t.setStyle(
                             TableStyle(
                                 [
-                                    (
-                                        "BACKGROUND",
-                                        (0, 0),
-                                        (-1, 0),
-                                        colors.HexColor("#f6f8fa"),
-                                    ),
-                                    (
-                                        "TEXTCOLOR",
-                                        (0, 0),
-                                        (-1, 0),
-                                        colors.HexColor("#1a1a1a"),
-                                    ),
-                                    ("ALIGN", (0, 0), (-1, -1), "LEFT"),
-                                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                                    ("FONTSIZE", (0, 0), (-1, 0), 10),
-                                    ("BOTTOMPADDING", (0, 0), (-1, 0), 12),
+                                    ("BACKGROUND", (0, 0), (-1, 0), header_bg),
                                     ("BACKGROUND", (0, 1), (-1, -1), colors.white),
-                                    (
-                                        "GRID",
-                                        (0, 0),
-                                        (-1, -1),
-                                        1,
-                                        colors.HexColor("#e1e4e8"),
-                                    ),
-                                    ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
-                                    ("FONTSIZE", (0, 1), (-1, -1), 9),
-                                    ("PADDING", (0, 0), (-1, -1), 6),
+                                    ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                                    ("BOTTOMPADDING", (0, 0), (-1, 0), 8),
+                                    ("TOPPADDING", (0, 0), (-1, -1), 4),
+                                    ("BOTTOMPADDING", (0, 1), (-1, -1), 4),
+                                    ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                                    ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                                    ("GRID", (0, 0), (-1, -1), 0.5, border_color),
                                 ]
                             )
                         )
