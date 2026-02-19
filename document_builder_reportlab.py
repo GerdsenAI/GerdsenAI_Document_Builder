@@ -322,6 +322,115 @@ class DocumentBuilder:
                 spaceAfter=12,
                 spaceBefore=12,
             ),
+            # --- Block-specific code styles ---
+            "DiffCode": ParagraphStyle(
+                "DiffCode",
+                parent=styles["Code"],
+                fontName="Courier",
+                fontSize=9,
+                textColor=colors.HexColor(
+                    self.config.get("code_blocks", {})
+                    .get("diff", {})
+                    .get("context", "#cdd6f4")
+                ),
+                backColor=colors.HexColor(
+                    self.config.get("code_blocks", {})
+                    .get("diff", {})
+                    .get("background", "#1e1e2e")
+                ),
+                borderColor=colors.HexColor(
+                    self.config.get("code_blocks", {})
+                    .get("diff", {})
+                    .get("border_color", "#89b4fa")
+                ),
+                borderWidth=3,
+                borderPadding=8,
+                leftIndent=4,
+                rightIndent=0,
+                spaceAfter=12,
+                spaceBefore=12,
+            ),
+            "TreeCode": ParagraphStyle(
+                "TreeCode",
+                parent=styles["Code"],
+                fontName="Courier",
+                fontSize=9,
+                textColor=colors.HexColor(
+                    self.config.get("code_blocks", {})
+                    .get("treeview", {})
+                    .get("files", "#cdd6f4")
+                ),
+                backColor=colors.HexColor(
+                    self.config.get("code_blocks", {})
+                    .get("treeview", {})
+                    .get("background", "#1e1e2e")
+                ),
+                borderColor=colors.HexColor(
+                    self.config.get("code_blocks", {})
+                    .get("treeview", {})
+                    .get("border_color", "#a6e3a1")
+                ),
+                borderWidth=3,
+                borderPadding=8,
+                leftIndent=4,
+                rightIndent=0,
+                spaceAfter=12,
+                spaceBefore=12,
+            ),
+            "ShellCode": ParagraphStyle(
+                "ShellCode",
+                parent=styles["Code"],
+                fontName="Courier",
+                fontSize=9,
+                textColor=colors.HexColor(
+                    self.config.get("code_blocks", {})
+                    .get("shell", {})
+                    .get("command", "#00ff00")
+                ),
+                backColor=colors.HexColor(
+                    self.config.get("code_blocks", {})
+                    .get("shell", {})
+                    .get("background", "#000000")
+                ),
+                borderColor=colors.HexColor(
+                    self.config.get("code_blocks", {})
+                    .get("shell", {})
+                    .get("border_color", "#00ff00")
+                ),
+                borderWidth=3,
+                borderPadding=8,
+                leftIndent=4,
+                rightIndent=0,
+                spaceAfter=12,
+                spaceBefore=12,
+            ),
+            "GenericCode": ParagraphStyle(
+                "GenericCode",
+                parent=styles["Code"],
+                fontName="Courier",
+                fontSize=9,
+                textColor=colors.HexColor(
+                    self.config.get("code_blocks", {})
+                    .get("generic", {})
+                    .get("text", "#24292e")
+                ),
+                backColor=colors.HexColor(
+                    self.config.get("code_blocks", {})
+                    .get("generic", {})
+                    .get("background", "#f6f8fa")
+                ),
+                borderColor=colors.HexColor(
+                    self.config.get("code_blocks", {})
+                    .get("generic", {})
+                    .get("border_color", "#e1e4e8")
+                ),
+                borderWidth=1,
+                borderPadding=8,
+                leftIndent=0,
+                rightIndent=0,
+                spaceAfter=12,
+                spaceBefore=12,
+            ),
             "CustomInlineCode": ParagraphStyle(
                 "CustomInlineCode",
                 parent=styles["Normal"],
@@ -1086,6 +1195,132 @@ class DocumentBuilder:
                 except Exception as e:
                     self.logger.warning(f"Failed to cleanup temp file {mmd_path}: {e}")
 
+    def _detect_code_language(self, code_elem) -> Optional[str]:
+        """Extract language from code element CSS classes."""
+        if not code_elem:
+            return None
+        classes = code_elem.get("class") or []
+        if isinstance(classes, str):
+            classes = [classes]
+        for cls in classes:
+            cls_str = str(cls).lower()
+            if cls_str.startswith("language-"):
+                return cls_str.replace("language-", "")
+            if cls_str.startswith("highlight-"):
+                return cls_str.replace("highlight-", "")
+        return None
+
+    def _render_code_block(self, lines: List[str], lang: Optional[str]) -> tuple:
+        """Render code lines with language-specific styling.
+
+        Returns:
+            tuple: (styled_html_content, style_name)
+        """
+        cb = self.config.get("code_blocks", {})
+
+        if lang == "diff":
+            dc = cb.get("diff", {})
+            c_add = dc.get("added", "#a6e3a1")
+            c_rem = dc.get("removed", "#f38ba8")
+            c_hunk = dc.get("hunk_header", "#89b4fa")
+            c_ctx = dc.get("context", "#cdd6f4")
+            styled = []
+            for line in lines:
+                escaped = (
+                    line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                )
+                if line.startswith("+++") or line.startswith("---"):
+                    styled.append(f'<font color="{c_hunk}">' f"<b>{escaped}</b></font>")
+                elif line.startswith("+"):
+                    styled.append(f'<font color="{c_add}">{escaped}</font>')
+                elif line.startswith("-"):
+                    styled.append(f'<font color="{c_rem}">{escaped}</font>')
+                elif line.startswith("@@"):
+                    styled.append(f'<font color="{c_hunk}">' f"<i>{escaped}</i></font>")
+                else:
+                    styled.append(f'<font color="{c_ctx}">{escaped}</font>')
+            return "<br/>".join(styled), "DiffCode"
+
+        elif lang in ("tree", "treeview"):
+            tc = cb.get("treeview", {})
+            c_tree = tc.get("tree_chars", "#89b4fa")
+            c_dir = tc.get("directories", "#f9e2af")
+            c_file = tc.get("files", "#cdd6f4")
+            styled = []
+            for line in lines:
+                escaped = (
+                    line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                )
+                # Highlight tree drawing characters
+                processed = re.sub(
+                    r"([├└│─┬┤┼]+)",
+                    lambda m: (f'<font color="{c_tree}">' f"{m.group(1)}</font>"),
+                    escaped,
+                )
+                # Also handle ASCII tree chars
+                processed = re.sub(
+                    r"(\|--|\\--|/--|\|   )",
+                    lambda m: (f'<font color="{c_tree}">' f"{m.group(1)}</font>"),
+                    processed,
+                )
+                # Directories end with /
+                if line.rstrip().endswith("/"):
+                    styled.append(
+                        f'<font color="{c_dir}">' f"<b>{processed}</b></font>"
+                    )
+                else:
+                    styled.append(f'<font color="{c_file}">' f"{processed}</font>")
+            return "<br/>".join(styled), "TreeCode"
+
+        elif lang in ("bash", "sh", "zsh", "shell", "console", "terminal"):
+            sc = cb.get("shell", {})
+            c_prompt = sc.get("prompt", "#a6e3a1")
+            c_cmd = sc.get("command", "#00ff00")
+            c_out = sc.get("output", "#94e2d5")
+            styled = []
+            for line in lines:
+                escaped = (
+                    line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                )
+                # Lines starting with $ # or % are prompts
+                prompt_match = re.match(r"^(\s*[$#%]\s*)(.*)", escaped)
+                if prompt_match:
+                    p, cmd = prompt_match.groups()
+                    styled.append(
+                        f'<font color="{c_prompt}">'
+                        f"<b>{p}</b></font>"
+                        f'<font color="{c_cmd}">{cmd}</font>'
+                    )
+                elif line.startswith("#"):
+                    # Comment lines
+                    styled.append(f'<font color="{c_prompt}">' f"{escaped}</font>")
+                else:
+                    # Output lines
+                    styled.append(f'<font color="{c_out}">' f"{escaped}</font>")
+            return "<br/>".join(styled), "ShellCode"
+
+        elif lang and lang not in ("mermaid",):
+            # Known language — use generic light style
+            gc = cb.get("generic", {})
+            c_text = gc.get("text", "#24292e")
+            styled = []
+            for line in lines:
+                escaped = (
+                    line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                )
+                styled.append(f'<font color="{c_text}">{escaped}</font>')
+            return "<br/>".join(styled), "GenericCode"
+
+        else:
+            # No language or unknown — default terminal style
+            styled = []
+            for line in lines:
+                escaped = (
+                    line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                )
+                styled.append(escaped)
+            return "<br/>".join(styled), "CustomCode"
+
     def _process_markdown_to_story(
         self, content: str, toc: Optional[TableOfContents] = None
     ) -> List:
@@ -1372,21 +1607,21 @@ class DocumentBuilder:
                     if code_elem:
                         code_text = code_elem.get_text().strip()
 
-                    # Process code lines
-                    lines = code_text.split("\n")
-                    code_lines = []
-                    for line in lines:
-                        if line.strip():
-                            line = line.replace("&", "&amp;")
-                            line = line.replace("<", "&lt;")
-                            line = line.replace(">", "&gt;")
-                            code_lines.append(line)
-                        else:
-                            code_lines.append("")
+                    # Detect language for styling
+                    lang = self._detect_code_language(code_elem)
+                    if lang:
+                        self.logger.debug(f"Code block language: {lang}")
 
-                    if code_lines:
-                        code_content = "<br/>".join(code_lines)
-                        story.append(Paragraph(code_content, self.styles["CustomCode"]))
+                    # Process and style code lines
+                    lines = code_text.split("\n")
+                    if lines:
+                        content_html, style_name = self._render_code_block(lines, lang)
+                        story.append(
+                            Paragraph(
+                                content_html,
+                                self.styles[style_name],
+                            )
+                        )
                         story.append(Spacer(1, 0.1 * inch))
 
                 elif element.name == "div" and "highlight" in (
@@ -1394,23 +1629,22 @@ class DocumentBuilder:
                 ):
                     # Handle highlighted code blocks
                     code_elem = element.find("pre")
+                    inner_code = None
+                    if code_elem:
+                        inner_code = code_elem.find("code")
+                    lang = self._detect_code_language(inner_code or code_elem)
                     if code_elem:
                         code_text = code_elem.get_text().strip()
                         lines = code_text.split("\n")
-                        code_lines = []
-                        for line in lines:
-                            if line.strip():
-                                line = line.replace("&", "&amp;")
-                                line = line.replace("<", "&lt;")
-                                line = line.replace(">", "&gt;")
-                                code_lines.append(line)
-                            else:
-                                code_lines.append("")
-
-                        if code_lines:
-                            code_content = "<br/>".join(code_lines)
+                        if lines:
+                            content_html, style_name = self._render_code_block(
+                                lines, lang
+                            )
                             story.append(
-                                Paragraph(code_content, self.styles["CustomCode"])
+                                Paragraph(
+                                    content_html,
+                                    self.styles[style_name],
+                                )
                             )
                             story.append(Spacer(1, 0.1 * inch))
 
@@ -1870,7 +2104,7 @@ def main():
     )
     parser.add_argument(
         "--repo-path",
-        default="/Volumes/M2 Raid0/GerdsenAI_Repositories/GerdsenAI_Document_Builder",
+        default=str(Path(__file__).resolve().parent),
         help="Repository path",
     )
 
