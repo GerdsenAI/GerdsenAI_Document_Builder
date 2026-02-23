@@ -1,51 +1,51 @@
 #!/usr/bin/env python3
 """
 GerdsenAI Document Builder
-A world-class document builder that converts Markdown/Text files to professional PDFs
-with custom styling, working Table of Contents, and comprehensive logging.
+Converts Markdown/Text to professional PDFs with custom
+styling, Table of Contents, and comprehensive logging.
 """
 
-import os
 import sys
 import argparse
 import re
-import base64
 import tempfile
-import subprocess
 import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from datetime import datetime
-from typing import Optional, Dict, Any, List, Tuple, Union
-import io
+from typing import Optional, Dict, Any, List, Tuple
 import traceback
-import textwrap
 
 # Third-party imports
 import markdown
 from mermaid_cli import render_mermaid_file_sync
-from markdown.extensions import (
-    tables,
-    fenced_code,
-    footnotes,
-    attr_list,
-    def_list,
-    abbr,
-    toc,
-)
 from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4, letter
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import (
+    getSampleStyleSheet,
+    ParagraphStyle,
+)
 from reportlab.lib.units import inch, mm
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage
-from reportlab.platypus import Table, TableStyle, PageBreak, KeepTogether
-from reportlab.platypus.doctemplate import PageTemplate, BaseDocTemplate
-from reportlab.platypus.frames import Frame
-from reportlab.platypus.tableofcontents import TableOfContents
-from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT, TA_JUSTIFY
+from reportlab.platypus import (
+    SimpleDocTemplate,
+    Paragraph,
+    Spacer,
+    Image as RLImage,
+)
+from reportlab.platypus import (
+    Table,
+    TableStyle,
+    PageBreak,
+)
+from reportlab.platypus.tableofcontents import (
+    TableOfContents,
+)
+from reportlab.lib.enums import (
+    TA_CENTER,
+    TA_LEFT,
+    TA_JUSTIFY,
+)
 from reportlab.pdfgen import canvas
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
 from PIL import Image
 from bs4 import BeautifulSoup, Tag
 import yaml
@@ -1710,10 +1710,14 @@ class DocumentBuilder:
                                 r.append("")
 
                         # Available page width (points)
-                        available_width = A4[0] - (
-                            self.config["margins"]["left"]
-                            + self.config["margins"]["right"]
-                        ) * mm
+                        available_width = (
+                            A4[0]
+                            - (
+                                self.config["margins"]["left"]
+                                + self.config["margins"]["right"]
+                            )
+                            * mm
+                        )
 
                         # For wide tables (>6 cols), use a smaller font
                         if num_cols > 6:
@@ -1758,13 +1762,19 @@ class DocumentBuilder:
                             if total_after > available_width:
                                 excess = total_after - available_width
                                 scalable = [
-                                    i for i, w in enumerate(col_widths) if w > min_col_width
+                                    i
+                                    for i, w in enumerate(col_widths)
+                                    if w > min_col_width
                                 ]
                                 scalable_total = sum(col_widths[i] for i in scalable)
                                 if scalable_total > 0:
                                     for i in scalable:
-                                        col_widths[i] -= excess * (col_widths[i] / scalable_total)
-                                        col_widths[i] = max(min_col_width, col_widths[i])
+                                        col_widths[i] -= excess * (
+                                            col_widths[i] / scalable_total
+                                        )
+                                        col_widths[i] = max(
+                                            min_col_width, col_widths[i]
+                                        )
 
                         # Wrap cell text in Paragraph objects for word-wrapping
                         table_data = []
