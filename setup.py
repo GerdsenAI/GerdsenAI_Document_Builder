@@ -39,12 +39,15 @@ NC = "\033[0m"  # No Color
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
+
 def print_banner():
-    print(f"""
+    print(
+        f"""
 {GREEN}╔═══════════════════════════════════════════════════════════╗
-║         GerdsenAI Document Builder v2.0.0                 ║
+║         GerdsenAI Document Builder v2.1.0                 ║
 ╚═══════════════════════════════════════════════════════════╝{NC}
-""")
+"""
+    )
 
 
 def print_menu():
@@ -56,6 +59,7 @@ def print_menu():
     print(f"  {BOLD}[6]{NC}  Clean logs only")
     print(f"  {BOLD}[7]{NC}  Reinstall / update dependencies")
     print(f"  {BOLD}[8]{NC}  Show help")
+    print(f"  {BOLD}[9]{NC}  Set cover / footer logos")
     print(f"  {BOLD}[0]{NC}  Exit")
     print()
 
@@ -85,12 +89,10 @@ def ensure_dirs():
 
 # ── Venv Bootstrap ───────────────────────────────────────────────────────────
 
+
 def is_in_venv():
     """Check if we are running inside the project venv."""
-    return (
-        hasattr(sys, "prefix")
-        and Path(sys.prefix).resolve() == VENV_DIR.resolve()
-    )
+    return hasattr(sys, "prefix") and Path(sys.prefix).resolve() == VENV_DIR.resolve()
 
 
 def create_venv():
@@ -119,7 +121,9 @@ def bootstrap_venv():
         install_dependencies()
         print(f"\n{GREEN}Setup complete!{NC}")
     elif not VENV_PYTHON.exists():
-        print(f"{RED}Venv directory exists but Python binary is missing. Recreating...{NC}")
+        print(
+            f"{RED}Venv directory exists but Python binary is missing. Recreating...{NC}"
+        )
         shutil.rmtree(VENV_DIR)
         create_venv()
         install_dependencies()
@@ -130,6 +134,7 @@ def bootstrap_venv():
 
 
 # ── Menu Actions ─────────────────────────────────────────────────────────────
+
 
 def action_build_all():
     """Build all markdown files in To_Build."""
@@ -246,7 +251,8 @@ def action_reinstall_deps():
 
 def action_help():
     """Show help and project info."""
-    print(f"""
+    print(
+        f"""
 {BOLD}GerdsenAI Document Builder{NC}
 {DIM}Convert Markdown files to professional PDFs{NC}
 
@@ -268,7 +274,118 @@ def action_help():
   python3 document_builder_reportlab.py [file.md]    Build one file
   python3 document_builder_reportlab.py --all         Build all files
   ./build_document.sh --help                          Shell script help
-""")
+"""
+    )
+
+
+def action_set_logos():
+    """Let the user pick cover and footer logos from Assets/."""
+    assets = SCRIPT_DIR / "Assets"
+    if not assets.exists():
+        print(f"\n{RED}Assets/ directory not found.{NC}")
+        return
+
+    images = sorted(
+        f.name
+        for f in assets.iterdir()
+        if f.suffix.lower() in (".png", ".jpg", ".jpeg", ".svg")
+    )
+    if not images:
+        print(f"\n{YELLOW}No image files found in Assets/.{NC}")
+        print(f"{DIM}Place your logo PNG/JPG in the Assets/ folder.{NC}")
+        return
+
+    # Load current config
+    import yaml as _yaml
+
+    config_data = {}
+    if CONFIG_FILE.exists():
+        with open(CONFIG_FILE) as cf:
+            config_data = _yaml.safe_load(cf) or {}
+
+    logos = config_data.get("logos", {})
+    cur_cover = logos.get("cover", "(not set)")
+    cur_footer = logos.get("footer", "(not set)")
+
+    print(f"\n{BOLD}Current logos:{NC}")
+    print(f"  Cover  : {CYAN}{cur_cover}{NC}")
+    print(f"  Footer : {CYAN}{cur_footer}{NC}")
+
+    print(f"\n{BOLD}Available images in Assets/:{NC}\n")
+    for i, name in enumerate(images, 1):
+        marker = ""
+        if name == cur_cover and name == cur_footer:
+            marker = f" {DIM}(cover + footer){NC}"
+        elif name == cur_cover:
+            marker = f" {DIM}(cover){NC}"
+        elif name == cur_footer:
+            marker = f" {DIM}(footer){NC}"
+        print(f"  {BOLD}[{i}]{NC}  {name}{marker}")
+    print(f"  {BOLD}[0]{NC}  Cancel")
+    print()
+
+    # --- Cover logo ---
+    choice = prompt_choice("Select COVER logo: ")
+    try:
+        idx = int(choice)
+    except ValueError:
+        print(f"{RED}Invalid selection.{NC}")
+        return
+    if idx == 0:
+        return
+    if idx < 1 or idx > len(images):
+        print(f"{RED}Invalid selection.{NC}")
+        return
+    cover_logo = images[idx - 1]
+
+    # --- Footer logo ---
+    print()
+    use_same = prompt_choice(
+        f"Use same logo for FOOTER? (y/n) [{CYAN}{cover_logo}{NC}]: "
+    )
+    if use_same.lower() in ("", "y", "yes"):
+        footer_logo = cover_logo
+    else:
+        choice = prompt_choice("Select FOOTER logo: ")
+        try:
+            idx = int(choice)
+        except ValueError:
+            print(f"{RED}Invalid selection.{NC}")
+            return
+        if idx == 0:
+            return
+        if idx < 1 or idx > len(images):
+            print(f"{RED}Invalid selection.{NC}")
+            return
+        footer_logo = images[idx - 1]
+
+    # --- Write to config (comment-preserving) ---
+    text = CONFIG_FILE.read_text()
+
+    import re as _re
+
+    # Replace existing cover/footer lines under logos:
+    cover_pat = _re.compile(r"^(\s*cover:\s*).*$", _re.MULTILINE)
+    footer_pat = _re.compile(r"^(\s*footer:\s*).*$", _re.MULTILINE)
+
+    if "logos:" in text:
+        text = cover_pat.sub(rf'\1"{cover_logo}"', text, count=1)
+        text = footer_pat.sub(rf'\1"{footer_logo}"', text, count=1)
+    else:
+        # Append logos section
+        block = (
+            f"\n# Logo settings (relative to Assets/)\n"
+            f"logos:\n"
+            f'  cover: "{cover_logo}"\n'
+            f'  footer: "{footer_logo}"\n'
+        )
+        text += block
+
+    CONFIG_FILE.write_text(text)
+
+    print(f"\n{GREEN}Logos updated in config.yaml:{NC}")
+    print(f"  Cover  : {CYAN}{cover_logo}{NC}")
+    print(f"  Footer : {CYAN}{footer_logo}{NC}")
 
 
 # ── Main Loop ────────────────────────────────────────────────────────────────
@@ -282,6 +399,7 @@ ACTIONS = {
     "6": action_clean_logs,
     "7": action_reinstall_deps,
     "8": action_help,
+    "9": action_set_logos,
 }
 
 

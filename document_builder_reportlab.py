@@ -14,6 +14,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, Any, List, Tuple
+import textwrap
 import traceback
 
 # Third-party imports
@@ -609,7 +610,7 @@ class DocumentBuilder:
         Returns:
             Tuple of (sanitized_code, list_of_fixes_applied)
         """
-        original_code = mermaid_code
+        _ = mermaid_code  # preserved for potential future diff
         fixes_applied = []
 
         # Get configuration
@@ -945,8 +946,6 @@ class DocumentBuilder:
         lines = mermaid_code.split("\n")
         simplified = [lines[0]]  # Keep diagram type declaration
 
-        node_counter = 1
-
         for line in lines[1:]:
             line = line.strip()
             if not line or line.startswith("%") or line.startswith("//"):
@@ -954,9 +953,9 @@ class DocumentBuilder:
 
             # Replace complex labels with simple generic ones
             # Keep the structure but simplify labels
-            line = re.sub(r'\["[^"]*"\]', f"[Node]", line)
-            line = re.sub(r'\("[^"]*"\)', f"(Node)", line)
-            line = re.sub(r"\{[^}]*\}", f"{{Node}}", line)
+            line = re.sub(r'\["[^"]*"\]', "[Node]", line)
+            line = re.sub(r'\("[^"]*"\)', "(Node)", line)
+            line = re.sub(r"\{[^}]*\}", "{Node}", line)
 
             simplified.append(line)
 
@@ -995,10 +994,11 @@ class DocumentBuilder:
                 if fixes_applied and mermaid_config.get("show_fix_warnings", True):
                     unique_fixes = list(set(fixes_applied))  # Remove duplicates
                     print(
-                        f"\n⚠️  Auto-fixed Mermaid diagram ({len(unique_fixes)} fix{'es' if len(unique_fixes) != 1 else ''}):"
+                        f"\n[WARN] Auto-fixed Mermaid diagram "
+                        f"({len(unique_fixes)} fix{'es' if len(unique_fixes) != 1 else ''}):"
                     )
                     for fix in unique_fixes:
-                        print(f"   ✓ {fix}")
+                        print(f"   - {fix}")
                     print()
 
                 mermaid_code = sanitized_code
@@ -1016,7 +1016,7 @@ class DocumentBuilder:
             self.logger.debug(f"Mermaid code length: {len(mermaid_code)} characters")
 
             # Show progress indicator
-            print("   🔄 Rendering diagram...", end="", flush=True)
+            print("   Rendering diagram...", end="", flush=True)
 
             # Render using local Chromium via Playwright
             render_mermaid_file_sync(
@@ -1035,20 +1035,21 @@ class DocumentBuilder:
                 },
             )
 
-            print(" ✓", flush=True)
+            print(" done", flush=True)
 
             # Verify the file was created
             if not Path(png_path).exists():
                 raise FileNotFoundError(
-                    f"Mermaid rendering failed - output file not created"
+                    "Mermaid rendering failed - output file not created"
                 )
 
-            self.logger.info(f"Successfully rendered Mermaid diagram")
+            self.logger.info("Successfully rendered Mermaid diagram")
             return png_path
 
         except ImportError as e:
             self.logger.error(
-                f"mermaid-cli not installed. Run: pip install mermaid-cli && playwright install chromium"
+                "mermaid-cli not installed. Run: "
+                "pip install mermaid-cli && playwright install chromium"
             )
             self.logger.error(f"Error: {e}")
             if mermaid_config.get("fallback_to_code", True):
@@ -1056,7 +1057,7 @@ class DocumentBuilder:
             raise
 
         except Exception as e:
-            print(" ✗", flush=True)  # Clear progress indicator
+            print(" failed", flush=True)  # Clear progress indicator
 
             # Extract the actual error message
             error_msg = str(e)
@@ -1087,25 +1088,30 @@ class DocumentBuilder:
 
                     # Only prompt user if configured AND not auto-accepting
                     if prompt_user and not auto_accept and should_render_simplified:
-                        print(f"\n❌ Mermaid diagram rendering failed: {error_summary}")
                         print(
-                            f"   Diagram can be rendered in simplified form (structure preserved, labels removed)"
+                            f"\n[FAIL] Mermaid diagram rendering failed: {error_summary}"
                         )
-                        response = (
-                            input("   Render simplified diagram? (yes/no/all) [yes]: ")
+                        print(
+                            "   Diagram can be rendered in simplified form"
+                            " (structure preserved, labels removed)"
+                        )
+                        choice = (
+                            input("   Render simplified? (y/n/a=always): ")
                             .strip()
                             .lower()
                         )
 
-                        if response == "all":
+                        if choice == "a":
                             # User wants all future simplified diagrams without prompting
                             mermaid_config["prompt_before_simplified"] = False
                             mermaid_config["auto_accept_simplified"] = True
                             should_render_simplified = True
                             print(
-                                "   ✓ Will auto-render all future simplified diagrams without prompting\n"
+                                "   Will auto-render all future"
+                                " simplified diagrams"
+                                " without prompting\n"
                             )
-                        elif response in ["n", "no"]:
+                        elif choice in ["n", "no"]:
                             should_render_simplified = False
                             self.logger.info(
                                 "User declined simplified rendering, falling back to code block"
@@ -1114,8 +1120,8 @@ class DocumentBuilder:
                             should_render_simplified = True
                     else:
                         # Auto-accepting - show informative message
-                        print(f"\n⚠️  Diagram rendering failed: {error_summary}")
-                        print(f"   🔄 Automatically rendering simplified version...")
+                        print(f"\n[WARN] Diagram rendering failed: {error_summary}")
+                        print("   Automatically rendering simplified version...")
 
                     if not should_render_simplified:
                         if mermaid_config.get("fallback_to_code", True):
@@ -1125,9 +1131,7 @@ class DocumentBuilder:
                     # Create simplified version
                     self.logger.info("Attempting simplified diagram rendering...")
                     if not auto_accept:
-                        print(
-                            "   🔄 Rendering simplified diagram...", end="", flush=True
-                        )
+                        print("   Rendering simplified diagram...", end="", flush=True)
 
                     simplified_code = self._create_simplified_mermaid(mermaid_code)
 
@@ -1171,8 +1175,8 @@ class DocumentBuilder:
                                 "Successfully rendered simplified Mermaid diagram"
                             )
                             if not auto_accept:
-                                print(" ✓", flush=True)
-                            print("   ✅ Simplified diagram rendered successfully\n")
+                                print(" done", flush=True)
+                            print("   [OK] Simplified diagram rendered successfully\n")
 
                             # DON'T delete the PNG - it's needed by ReportLab!
                             # Only clean up the .mmd file
@@ -1207,7 +1211,7 @@ class DocumentBuilder:
                         f"Simplified rendering also failed: {error_summary2}"
                     )
                     print(
-                        f"\n   ❌ Simplified rendering also failed: {error_summary2}\n"
+                        f"\n   [FAIL] Simplified rendering also failed: {error_summary2}\n"
                     )
 
             # Final fallback to code block
@@ -1592,7 +1596,8 @@ class DocumentBuilder:
                                         scaled_height = page_height
                                         scaled_width = scaled_width * scale_factor
                                         self.logger.debug(
-                                            f"Scaled diagram down to fit page height: {scaled_width:.0f}x{scaled_height:.0f}"
+                                            f"Scaled diagram to fit page: "
+                                            f"{scaled_width:.0f}x{scaled_height:.0f}"
                                         )
 
                                     # Create ReportLab image
@@ -1837,7 +1842,9 @@ class DocumentBuilder:
         usable_width = width - (2 * margin)
 
         # Add logo if exists
-        logo_path = self.assets_dir / "GerdsenAI_Neural_G_Invoice.png"
+        logos = self.config.get("logos", {})
+        cover_logo = logos.get("cover", "GerdsenAI_Neural_G_Invoice.png")
+        logo_path = self.assets_dir / cover_logo
         logo_bottom = height - 3.5 * inch
 
         if logo_path.exists():
@@ -1864,7 +1871,6 @@ class DocumentBuilder:
         title = metadata.get("title", "Untitled Document")
 
         # Word wrap the title
-        import textwrap
 
         title_font_size = 28
         char_width = title_font_size * 0.6
@@ -1962,7 +1968,12 @@ class DocumentBuilder:
             canvas_obj.drawRightString(width - inch, 0.5 * inch, f"Page {doc.page - 1}")
 
             # Footer - logo
-            logo_path = self.assets_dir / "GerdsenAI_Neural_G_Invoice.png"
+            logos = self.config.get("logos", {})
+            footer_logo = logos.get(
+                "footer",
+                "GerdsenAI_Neural_G_Invoice.png",
+            )
+            logo_path = self.assets_dir / footer_logo
             if logo_path.exists():
                 try:
                     canvas_obj.drawImage(
@@ -1974,7 +1985,7 @@ class DocumentBuilder:
                         preserveAspectRatio=True,
                         mask="auto",
                     )
-                except:
+                except Exception:
                     pass
 
         canvas_obj.restoreState()
@@ -2120,7 +2131,7 @@ class DocumentBuilder:
                 onLaterPages=on_every_page,
             )
 
-            self.logger.info(f"✅ Successfully generated PDF: {output_path}")
+            self.logger.info(f"[OK] Successfully generated PDF: {output_path}")
 
             # Clean up temporary files now that PDF is built
             for temp_file in self.temp_files:
@@ -2137,7 +2148,7 @@ class DocumentBuilder:
             return str(output_path)
 
         except Exception as e:
-            self.logger.error(f"❌ Error building document: {e}")
+            self.logger.error(f"[FAIL] Error building document: {e}")
             self.logger.error(traceback.format_exc())
 
             # Clean up temporary files even on error
@@ -2177,21 +2188,21 @@ class DocumentBuilder:
 
         for file_path in valid_files:
             try:
-                self.logger.info(f"📄 Building: {file_path.name}")
+                self.logger.info(f"[BUILD] Building: {file_path.name}")
                 output = self.build_document(file_path.name)
                 output_files.append(output)
                 success_count += 1
             except Exception as e:
                 error_count += 1
-                self.logger.error(f"❌ Error building {file_path.name}: {e}")
+                self.logger.error(f"[FAIL] Error building {file_path.name}: {e}")
                 self.logger.error(traceback.format_exc())
 
         # Summary
         self.logger.info("=" * 60)
-        self.logger.info(f"Build Summary:")
-        self.logger.info(f"  ✅ Successful: {success_count}")
-        self.logger.info(f"  ❌ Failed: {error_count}")
-        self.logger.info(f"  📄 Total: {len(valid_files)}")
+        self.logger.info("Build Summary:")
+        self.logger.info(f"  [OK] Successful: {success_count}")
+        self.logger.info(f"  [FAIL] Failed: {error_count}")
+        self.logger.info(f"  [INFO] Total: {len(valid_files)}")
         self.logger.info("=" * 60)
 
         return output_files
@@ -2226,15 +2237,15 @@ def main():
         builder = DocumentBuilder(args.repo_path)
 
         if args.all or args.input_file is None:
-            print("🚀 Building all documents...")
+            print("Building all documents...")
             output_files = builder.build_all_documents()
-            print(f"\n✨ Generated {len(output_files)} PDF(s)")
+            print(f"\nGenerated {len(output_files)} PDF(s)")
         else:
-            output = builder.build_document(args.input_file, args.output)
-            print(f"\n✨ PDF generated successfully!")
+            builder.build_document(args.input_file, args.output)
+            print("\nPDF generated successfully!")
 
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"[FAIL] Error: {e}")
         logging.getLogger("DocumentBuilder").error(traceback.format_exc())
         sys.exit(1)
 

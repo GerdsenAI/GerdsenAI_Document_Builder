@@ -65,7 +65,17 @@ version: "2.1.0"
 
 ### Changing the Logo
 
-Replace the file at `Assets/GerdsenAI_Neural_G_Invoice.png` with your own logo (PNG, any size — it will be scaled to ~2.5 inches wide while preserving aspect ratio). The logo also appears in the footer of every page.
+Logos are configured in `config.yaml` under the `logos` section. Cover and footer can use the same or different images:
+
+```yaml
+logos:
+  cover: "GerdsenAI_Neural_G_Invoice.png"   # displayed on cover page
+  footer: "GerdsenAI_Neural_G_Invoice.png"  # displayed in page footer
+```
+
+Place your logo files (PNG, JPG, or SVG) in the `Assets/` directory. The cover logo scales to ~2.5 inches wide while preserving aspect ratio.
+
+**Interactive setup:** Run `python3 setup.py` and select option **[9]** to pick logos from a list of available images.
 
 ### Changing Default Metadata
 

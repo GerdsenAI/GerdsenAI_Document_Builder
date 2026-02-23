@@ -10,6 +10,11 @@ default:
   watermark: false
   filename_prefix: "GerdsenAI_"  # Prefix for generated PDF filenames
 
+# Logo settings (relative to Assets/ directory)
+logos:
+  cover: "OPC-UA-Server-COLOR-Logo+Wordmark-Stacked-v3.2-20260125.png"
+  footer: "CSE-Icon.png"
+
 # Page settings
 page:
   size: "A4"  # Options: A4, Letter, Legal, A3
