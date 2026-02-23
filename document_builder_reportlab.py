@@ -222,11 +222,20 @@ class DocumentBuilder:
         if config_path.exists():
             try:
                 with open(config_path, "r") as f:
-                    yaml_config = yaml.safe_load(f)
-                    if yaml_config and "default" in yaml_config:
+                    yaml_config = yaml.safe_load(f) or {}
+
+                    # Merge 'default' section into top-level config
+                    if "default" in yaml_config:
                         default_config.update(yaml_config["default"])
-                    if "margins" in yaml_config:
-                        default_config["margins"] = yaml_config["margins"]
+
+                    # Merge all other top-level sections
+                    # (logos, mermaid, code_blocks, colors, page,
+                    #  typography, margins, etc.)
+                    for key, value in yaml_config.items():
+                        if key == "default":
+                            continue  # already merged above
+                        default_config[key] = value
+
                 self.logger.debug("Config loaded successfully")
             except Exception as e:
                 self.logger.warning(f"Could not load config.yaml: {e}")
