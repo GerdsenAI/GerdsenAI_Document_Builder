@@ -3,7 +3,6 @@
         "ms-python.python",
         "ms-python.vscode-pylance",
         "ms-python.black-formatter",
-        "ms-python.flake8",
         "yzhang.markdown-all-in-one",
         "davidanson.vscode-markdownlint",
         "bierner.markdown-mermaid"

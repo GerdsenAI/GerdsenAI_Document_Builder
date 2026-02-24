@@ -18,7 +18,7 @@ NC='[0m'
 mkdir -p "$DIR/Logs"
 
 echo -e "${GREEN}╔═══════════════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║      🚀 GerdsenAI Document Builder v2.0.0 🚀            ║${NC}"
+echo -e "${GREEN}║         GerdsenAI Document Builder v2.1.0               ║${NC}"
 echo -e "${GREEN}╚═══════════════════════════════════════════════════════════╝${NC}"
 echo -e "${BLUE}Log files will be saved to: $DIR/Logs/${NC}"
 
@@ -33,26 +33,26 @@ setup() {
     if [ ! -d "venv" ]; then
         echo "Creating virtual environment..."
         python3 -m venv venv || {
-            echo -e "${RED}❌ Failed to create virtual environment${NC}"
+            echo -e "${RED}[FAIL] Failed to create virtual environment${NC}"
             exit 1
         }
     fi
     
     # Activate and install packages
     source venv/bin/activate || {
-        echo -e "${RED}❌ Failed to activate virtual environment${NC}"
+        echo -e "${RED}[FAIL] Failed to activate virtual environment${NC}"
         exit 1
     }
     
     echo "Installing dependencies..."
     pip install --upgrade pip > /dev/null 2>&1
     pip install --upgrade markdown reportlab pillow beautifulsoup4 pyyaml watchdog pygments > /dev/null 2>&1 || {
-        echo -e "${RED}❌ Failed to install dependencies${NC}"
+        echo -e "${RED}[FAIL] Failed to install dependencies${NC}"
         echo "Please check the log file for details"
         exit 1
     }
     
-    echo -e "${GREEN}✅ Setup complete!${NC}"
+    echo -e "${GREEN}[OK] Setup complete!${NC}"
 }
 
 # Function to build documents with error handling
@@ -65,13 +65,13 @@ build() {
     
     # Activate virtual environment
     source venv/bin/activate || {
-        echo -e "${RED}❌ Failed to activate virtual environment${NC}"
+        echo -e "${RED}[FAIL] Failed to activate virtual environment${NC}"
         exit 1
     }
     
     # Check if document_builder_reportlab.py exists
     if [ ! -f "document_builder_reportlab.py" ]; then
-        echo -e "${RED}❌ Error: document_builder_reportlab.py not found${NC}"
+        echo -e "${RED}[FAIL] Error: document_builder_reportlab.py not found${NC}"
         exit 1
     fi
     
@@ -81,10 +81,10 @@ build() {
     
     # Check exit code
     if [ $? -eq 0 ]; then
-        echo -e "${GREEN}✅ Build process completed successfully${NC}"
+        echo -e "${GREEN}[OK] Build process completed successfully${NC}"
         echo -e "${BLUE}Check the Logs directory for detailed build information${NC}"
     else
-        echo -e "${RED}❌ Build process failed${NC}"
+        echo -e "${RED}[FAIL] Build process failed${NC}"
         echo -e "${YELLOW}Please check the log files in $DIR/Logs/ for details${NC}"
         exit 1
     fi
@@ -139,12 +139,12 @@ case "$1" in
         echo -e "${YELLOW}Cleaning output files...${NC}"
         rm -f PDFs/*.pdf
         rm -f Logs/*.log*
-        echo -e "${GREEN}✅ PDFs and logs cleaned${NC}"
+        echo -e "${GREEN}[OK] PDFs and logs cleaned${NC}"
         ;;
     --clean-logs)
         echo -e "${YELLOW}Cleaning log files...${NC}"
         rm -f Logs/*.log*
-        echo -e "${GREEN}✅ Logs cleaned${NC}"
+        echo -e "${GREEN}[OK] Logs cleaned${NC}"
         ;;
     --all|-a|'')
         echo -e "${BLUE}Building all documents...${NC}"
@@ -155,7 +155,7 @@ case "$1" in
             echo -e "${BLUE}Building: $1${NC}"
             build "$@"
         else
-            echo -e "${RED}❌ Error: File 'To_Build/$1' not found${NC}"
+            echo -e "${RED}[FAIL] Error: File 'To_Build/$1' not found${NC}"
             echo "Use --list to see available documents"
             exit 1
         fi
