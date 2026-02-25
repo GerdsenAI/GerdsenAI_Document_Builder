@@ -569,11 +569,12 @@ class DocumentBuilder:
                 front_matter = content[3:end_index].strip()
                 content = content[end_index + 3 :].strip()
 
-                # Parse front matter
-                for line in front_matter.split("\n"):
-                    if ":" in line:
-                        key, value = line.split(":", 1)
-                        metadata[key.strip().lower()] = value.strip()
+                # Parse front matter using yaml.safe_load for proper value handling
+                parsed = yaml.safe_load(front_matter)
+                if isinstance(parsed, dict):
+                    for key, value in parsed.items():
+                        k = key.strip().lower() if isinstance(key, str) else str(key)
+                        metadata[k] = str(value) if value is not None else ""
 
                 self.logger.debug(f"Extracted metadata: {list(metadata.keys())}")
             except ValueError:

@@ -12,8 +12,8 @@ default:
 
 # Logo settings (relative to Assets/ directory)
 logos:
-  cover: "OPC-UA-Server-COLOR-Logo+Wordmark-Stacked-v3.2-20260125.png"
-  footer: "CSE-Icon.png"
+  cover: "GerdsenAI_Neural_G_Invoice.png"
+  footer: "GerdsenAI_Neural_G_Invoice.png"
 
 # Page settings
 page:

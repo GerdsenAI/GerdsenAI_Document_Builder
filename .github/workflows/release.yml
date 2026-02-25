@@ -1,0 +1,31 @@
+name: Create Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Package release
+        run: |
+          mkdir -p release
+          cp document_builder_reportlab.py release/
+          cp config.yaml release/
+          cp requirements.txt release/
+          cp -r Assets release/
+          cp README.MD release/ 2>/dev/null || true
+          cp LICENSE.txt release/ 2>/dev/null || true
+          tar czf "GerdsenAI_Document_Builder-${GITHUB_REF_NAME}.tar.gz" -C release .
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: GerdsenAI_Document_Builder-*.tar.gz
+          generate_release_notes: true
