@@ -82,12 +82,12 @@ syntax_highlighting:
 # Block-specific code styling
 code_blocks:
   diff:
-    background: "#1e1e2e"
+    background: "#2b2b2b"
     added: "#a6e3a1"
     removed: "#f38ba8"
     context: "#cdd6f4"
     hunk_header: "#89b4fa"
-    border_color: "#89b4fa"
+    border_color: "#000000"
 
   treeview:
     background: "#1e1e2e"
@@ -97,23 +97,23 @@ code_blocks:
     border_color: "#a6e3a1"
 
   shell:
-    background: "#000000"
+    background: "#2b2b2b"
     prompt: "#a6e3a1"
     command: "#00ff00"
     output: "#94e2d5"
-    border_color: "#00ff00"
+    border_color: "#000000"
 
   generic:
-    background: "#f6f8fa"
-    text: "#24292e"
-    border_color: "#e1e4e8"
+    background: "#2b2b2b"
+    text: "#ffffff"
+    border_color: "#000000"
 
 # Mermaid diagram settings (local rendering via Playwright)
 mermaid:
   enabled: true  # Enable Mermaid diagram rendering
   
   # Rendering settings
-  theme: "default"  # Options: default, dark, forest, neutral, base
+  theme: "neutral"  # Options: default, dark, forest, neutral, base
   background: "white"  # white, transparent, or hex color (#ffffff)
   
   # Viewport for rendering (affects diagram quality and detail)

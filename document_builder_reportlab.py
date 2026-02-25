@@ -37,6 +37,7 @@ from reportlab.platypus import (
     Table,
     TableStyle,
     PageBreak,
+    KeepTogether,
 )
 from reportlab.platypus.tableofcontents import (
     TableOfContents,
@@ -278,7 +279,8 @@ class DocumentBuilder:
                 fontSize=20,
                 textColor=colors.HexColor("#1a1a1a"),
                 spaceBefore=24,
-                spaceAfter=12,
+                spaceAfter=26,
+                keepWithNext=1,
                 borderColor=colors.HexColor("#e1e4e8"),
                 borderWidth=0,
                 borderPadding=0,
@@ -290,7 +292,8 @@ class DocumentBuilder:
                 fontSize=16,
                 textColor=colors.HexColor("#2c3e50"),
                 spaceBefore=18,
-                spaceAfter=10,
+                spaceAfter=21,
+                keepWithNext=1,
             ),
             "CustomHeading3": ParagraphStyle(
                 "CustomHeading3",
@@ -299,7 +302,28 @@ class DocumentBuilder:
                 fontSize=14,
                 textColor=colors.HexColor("#34495e"),
                 spaceBefore=12,
+                spaceAfter=15,
+                keepWithNext=1,
+            ),
+            "CustomHeading4": ParagraphStyle(
+                "CustomHeading4",
+                parent=styles["Heading4"],
+                fontName="Helvetica-Bold",
+                fontSize=12,
+                textColor=colors.HexColor("#34495e"),
+                spaceBefore=10,
+                spaceAfter=12,
+                keepWithNext=1,
+            ),
+            "CustomHeading5": ParagraphStyle(
+                "CustomHeading5",
+                parent=styles["Heading5"],
+                fontName="Helvetica-Bold",
+                fontSize=11,
+                textColor=colors.HexColor("#4a6785"),
+                spaceBefore=8,
                 spaceAfter=8,
+                keepWithNext=1,
             ),
             "CustomBody": ParagraphStyle(
                 "CustomBody",
@@ -316,6 +340,42 @@ class DocumentBuilder:
                 bulletIndent=0,
                 leftIndent=0,
                 rightIndent=0,
+            ),
+            "ListItem1": ParagraphStyle(
+                "ListItem1",
+                parent=styles["BodyText"],
+                fontName="Helvetica",
+                fontSize=11,
+                textColor=colors.HexColor("#2c3e50"),
+                spaceBefore=2,
+                spaceAfter=2,
+                leading=14,
+                leftIndent=18,
+                bulletIndent=6,
+            ),
+            "ListItem2": ParagraphStyle(
+                "ListItem2",
+                parent=styles["BodyText"],
+                fontName="Helvetica",
+                fontSize=11,
+                textColor=colors.HexColor("#2c3e50"),
+                spaceBefore=2,
+                spaceAfter=2,
+                leading=14,
+                leftIndent=36,
+                bulletIndent=24,
+            ),
+            "ListItem3": ParagraphStyle(
+                "ListItem3",
+                parent=styles["BodyText"],
+                fontName="Helvetica",
+                fontSize=11,
+                textColor=colors.HexColor("#2c3e50"),
+                spaceBefore=2,
+                spaceAfter=2,
+                leading=14,
+                leftIndent=54,
+                bulletIndent=42,
             ),
             "TableCell": ParagraphStyle(
                 "TableCell",
@@ -352,9 +412,9 @@ class DocumentBuilder:
                 parent=styles["Code"],
                 fontName="Courier",
                 fontSize=9,
-                textColor=colors.HexColor("#00ff00"),
-                backColor=colors.HexColor("#000000"),
-                borderColor=colors.HexColor("#333333"),
+                textColor=colors.HexColor("#ffffff"),
+                backColor=colors.HexColor("#2b2b2b"),
+                borderColor=colors.HexColor("#000000"),
                 borderWidth=1,
                 borderPadding=8,
                 leftIndent=0,
@@ -376,16 +436,16 @@ class DocumentBuilder:
                 backColor=colors.HexColor(
                     self.config.get("code_blocks", {})
                     .get("diff", {})
-                    .get("background", "#1e1e2e")
+                    .get("background", "#2b2b2b")
                 ),
                 borderColor=colors.HexColor(
                     self.config.get("code_blocks", {})
                     .get("diff", {})
-                    .get("border_color", "#89b4fa")
+                    .get("border_color", "#000000")
                 ),
-                borderWidth=3,
+                borderWidth=1,
                 borderPadding=8,
-                leftIndent=4,
+                leftIndent=0,
                 rightIndent=0,
                 spaceAfter=12,
                 spaceBefore=12,
@@ -412,7 +472,7 @@ class DocumentBuilder:
                 ),
                 borderWidth=3,
                 borderPadding=8,
-                leftIndent=4,
+                leftIndent=0,
                 rightIndent=0,
                 spaceAfter=12,
                 spaceBefore=12,
@@ -430,16 +490,16 @@ class DocumentBuilder:
                 backColor=colors.HexColor(
                     self.config.get("code_blocks", {})
                     .get("shell", {})
-                    .get("background", "#000000")
+                    .get("background", "#2b2b2b")
                 ),
                 borderColor=colors.HexColor(
                     self.config.get("code_blocks", {})
                     .get("shell", {})
-                    .get("border_color", "#00ff00")
+                    .get("border_color", "#000000")
                 ),
-                borderWidth=3,
+                borderWidth=1,
                 borderPadding=8,
-                leftIndent=4,
+                leftIndent=0,
                 rightIndent=0,
                 spaceAfter=12,
                 spaceBefore=12,
@@ -452,17 +512,17 @@ class DocumentBuilder:
                 textColor=colors.HexColor(
                     self.config.get("code_blocks", {})
                     .get("generic", {})
-                    .get("text", "#24292e")
+                    .get("text", "#ffffff")
                 ),
                 backColor=colors.HexColor(
                     self.config.get("code_blocks", {})
                     .get("generic", {})
-                    .get("background", "#f6f8fa")
+                    .get("background", "#2b2b2b")
                 ),
                 borderColor=colors.HexColor(
                     self.config.get("code_blocks", {})
                     .get("generic", {})
-                    .get("border_color", "#e1e4e8")
+                    .get("border_color", "#000000")
                 ),
                 borderWidth=1,
                 borderPadding=8,
@@ -476,7 +536,7 @@ class DocumentBuilder:
                 parent=styles["Normal"],
                 fontName="Courier-Bold",
                 fontSize=10,
-                textColor=colors.HexColor("#00c853"),
+                textColor=colors.HexColor("#000000"),
             ),
             "CustomQuote": ParagraphStyle(
                 "CustomQuote",
@@ -609,6 +669,32 @@ class DocumentBuilder:
             f"Created heading: Level {level}, Text: {text}, Bookmark: {bookmark_name}"
         )
         return para
+
+    def _process_list_element(self, element, story, depth=0):
+        """Recursively process ul/ol elements with proper nesting indentation."""
+        max_depth = 2  # 0, 1, 2 → ListItem1, ListItem2, ListItem3
+        style_key = f"ListItem{min(depth, max_depth) + 1}"
+        style = self.styles[style_key]
+
+        is_ordered = element.name == "ol"
+        for idx, li in enumerate(element.find_all("li", recursive=False), 1):
+            bullet = f"{idx}. " if is_ordered else "\u2022 "
+
+            # Get only the direct text of this <li>, not text from nested lists
+            text_parts = []
+            for child in li.children:
+                if isinstance(child, str):
+                    text_parts.append(child.strip())
+                elif child.name not in ("ul", "ol"):
+                    text_parts.append(child.get_text())
+            text = bullet + " ".join(t for t in text_parts if t)
+
+            if text.strip() and text.strip() != bullet.strip():
+                story.append(Paragraph(text, style))
+
+            # Recurse into nested lists
+            for nested in li.find_all(["ul", "ol"], recursive=False):
+                self._process_list_element(nested, story, depth + 1)
 
     def _sanitize_mermaid_diagram(self, mermaid_code: str) -> Tuple[str, List[str]]:
         """
@@ -1346,7 +1432,7 @@ class DocumentBuilder:
         elif lang and lang not in ("mermaid",):
             # Known language — use generic light style
             gc = cb.get("generic", {})
-            c_text = gc.get("text", "#24292e")
+            c_text = gc.get("text", "#ffffff")
             styled = []
             for line in lines:
                 escaped = (
@@ -1403,7 +1489,7 @@ class DocumentBuilder:
         story = []
 
         # Check if document has any headings
-        headings = soup.find_all(["h1", "h2", "h3"])
+        headings = soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"])
         has_headings = bool(headings)
         self.logger.debug(f"Document has {len(headings)} headings")
 
@@ -1427,7 +1513,7 @@ class DocumentBuilder:
         for element in soup.children:
             if isinstance(element, Tag):
                 # Check if this is a manual TOC section to skip
-                if element.name in ["h1", "h2", "h3"]:
+                if element.name in ["h1", "h2", "h3", "h4", "h5", "h6"]:
                     text = element.get_text().lower()
                     # Start skipping if we encounter a "table of contents" heading
                     if "table of contents" in text and self._has_toc_section:
@@ -1449,7 +1535,6 @@ class DocumentBuilder:
                         text, self.styles["CustomHeading1"], 0
                     )
                     story.append(para)
-                    story.append(Spacer(1, 0.2 * inch))
 
                 elif element.name == "h2":
                     text = element.get_text()
@@ -1457,7 +1542,6 @@ class DocumentBuilder:
                         text, self.styles["CustomHeading2"], 1
                     )
                     story.append(para)
-                    story.append(Spacer(1, 0.15 * inch))
 
                 elif element.name == "h3":
                     text = element.get_text()
@@ -1465,7 +1549,27 @@ class DocumentBuilder:
                         text, self.styles["CustomHeading3"], 2
                     )
                     story.append(para)
-                    story.append(Spacer(1, 0.1 * inch))
+
+                elif element.name == "h4":
+                    text = element.get_text()
+                    para = self._create_heading_with_bookmark(
+                        text, self.styles["CustomHeading4"], 3
+                    )
+                    story.append(para)
+
+                elif element.name == "h5":
+                    text = element.get_text()
+                    para = self._create_heading_with_bookmark(
+                        text, self.styles["CustomHeading5"], 4
+                    )
+                    story.append(para)
+
+                elif element.name == "h6":
+                    text = element.get_text()
+                    para = self._create_heading_with_bookmark(
+                        text, self.styles["CustomHeading5"], 5
+                    )
+                    story.append(para)
 
                 elif element.name == "p":
                     # Skip paragraphs containing images
@@ -1496,7 +1600,7 @@ class DocumentBuilder:
                                 code_count += 1
                                 code_content = part[6:-7]
                                 para_parts.append(
-                                    f'<font name="Courier-Bold" size="10" color="#00c853">{code_content}</font>'
+                                    f'<font name="Courier-Bold" size="10" color="#000000">{code_content}</font>'
                                 )
                             elif part:
                                 para_parts.append(part)
@@ -1617,10 +1721,12 @@ class DocumentBuilder:
                                         height=scaled_height,
                                     )
 
-                                    # Add to story with spacing
-                                    story.append(Spacer(1, 0.1 * inch))
-                                    story.append(rl_img)
-                                    story.append(Spacer(1, 0.2 * inch))
+                                    # Add to story with spacing, kept together
+                                    story.append(KeepTogether([
+                                        Spacer(1, 0.1 * inch),
+                                        rl_img,
+                                        Spacer(1, 0.2 * inch),
+                                    ]))
 
                                     self.logger.info(
                                         f"Added Mermaid diagram: {scaled_width:.0f}x{scaled_height:.0f} points"
@@ -1661,13 +1767,13 @@ class DocumentBuilder:
                     lines = code_text.split("\n")
                     if lines:
                         content_html, style_name = self._render_code_block(lines, lang)
-                        story.append(
+                        story.append(KeepTogether([
                             Paragraph(
                                 content_html,
                                 self.styles[style_name],
-                            )
-                        )
-                        story.append(Spacer(1, 0.1 * inch))
+                            ),
+                            Spacer(1, 0.1 * inch),
+                        ]))
 
                 elif element.name == "div" and "highlight" in (
                     element.get("class") or []
@@ -1685,26 +1791,23 @@ class DocumentBuilder:
                             content_html, style_name = self._render_code_block(
                                 lines, lang
                             )
-                            story.append(
+                            story.append(KeepTogether([
                                 Paragraph(
                                     content_html,
                                     self.styles[style_name],
-                                )
-                            )
-                            story.append(Spacer(1, 0.1 * inch))
+                                ),
+                                Spacer(1, 0.1 * inch),
+                            ]))
 
                 elif element.name == "blockquote":
                     quote_text = element.get_text()
-                    story.append(Paragraph(quote_text, self.styles["CustomQuote"]))
-                    story.append(Spacer(1, 0.1 * inch))
+                    story.append(KeepTogether([
+                        Paragraph(quote_text, self.styles["CustomQuote"]),
+                        Spacer(1, 0.1 * inch),
+                    ]))
 
                 elif element.name == "ul" or element.name == "ol":
-                    for idx, li in enumerate(
-                        element.find_all("li", recursive=False), 1
-                    ):
-                        bullet = "• " if element.name == "ul" else f"{idx}. "
-                        text = bullet + li.get_text()
-                        story.append(Paragraph(text, self.styles["CustomBody"]))
+                    self._process_list_element(element, story, depth=0)
                     story.append(Spacer(1, 0.1 * inch))
 
                 elif element.name == "table":
@@ -1816,7 +1919,7 @@ class DocumentBuilder:
                             color_cfg.get("table_border", "#e1e4e8")
                         )
 
-                        t = Table(table_data, colWidths=col_widths)
+                        t = Table(table_data, colWidths=col_widths, repeatRows=1)
                         t.setStyle(
                             TableStyle(
                                 [
@@ -1833,8 +1936,7 @@ class DocumentBuilder:
                                 ]
                             )
                         )
-                        story.append(t)
-                        story.append(Spacer(1, 0.2 * inch))
+                        story.append(KeepTogether([t, Spacer(1, 0.2 * inch)]))
 
         self.logger.info(f"Generated {len(story)} story elements")
         return story
@@ -1847,9 +1949,10 @@ class DocumentBuilder:
         # Set page size
         width, height = A4
 
-        # Define margins
-        margin = 1 * inch
-        usable_width = width - (2 * margin)
+        # Use config margins to match body pages
+        left_margin = self.config["margins"]["left"] * mm
+        right_margin = self.config["margins"]["right"] * mm
+        usable_width = width - left_margin - right_margin
 
         # Add logo if exists
         logos = self.config.get("logos", {})
@@ -2106,6 +2209,53 @@ class DocumentBuilder:
             if suffix_lower in (".md", ".markdown"):
                 content_story = self._process_markdown_to_story(content, toc)
                 story.extend(content_story)
+            elif suffix_lower in (".mermaid", ".mmd"):
+                # Standalone mermaid diagram
+                self.logger.debug("Processing standalone Mermaid diagram")
+                img_path = self._render_mermaid_diagram(content)
+                if img_path:
+                    try:
+                        with Image.open(img_path) as pil_img:
+                            img_width, img_height = pil_img.size
+
+                        page_width = A4[0] - (
+                            self.config["margins"]["left"] * mm
+                            + self.config["margins"]["right"] * mm
+                        )
+                        page_height = A4[1] - (
+                            self.config["margins"]["top"] * mm
+                            + self.config["margins"]["bottom"] * mm
+                        )
+                        max_width_pct = (
+                            self.config.get("mermaid", {}).get("max_width_percent", 95) / 100
+                        )
+                        max_width = page_width * max_width_pct
+
+                        aspect_ratio = img_height / img_width
+                        if img_width > max_width / 0.75:
+                            scaled_width = max_width
+                            scaled_height = max_width * aspect_ratio
+                        else:
+                            scaled_width = img_width * 0.75
+                            scaled_height = img_height * 0.75
+
+                        if scaled_height > page_height:
+                            scale_factor = page_height / scaled_height
+                            scaled_height = page_height
+                            scaled_width = scaled_width * scale_factor
+
+                        rl_img = RLImage(img_path, width=scaled_width, height=scaled_height)
+                        story.append(Spacer(1, 0.2 * inch))
+                        story.append(rl_img)
+
+                        self.temp_files.append(img_path)
+                    except Exception as e:
+                        self.logger.error(f"Failed to process mermaid diagram: {e}")
+                        raise
+                else:
+                    raise RuntimeError(
+                        f"Mermaid rendering failed for {input_path.name}"
+                    )
             else:
                 # Plain text
                 self.logger.debug("Processing plain text document")
@@ -2191,7 +2341,7 @@ class DocumentBuilder:
         # Get all markdown and text files
         files = list(self.to_build_dir.glob("*"))
         valid_files = [
-            f for f in files if f.suffix.lower() in {".md", ".markdown", ".txt"}
+            f for f in files if f.suffix.lower() in {".md", ".markdown", ".txt", ".mermaid", ".mmd"}
         ]
 
         self.logger.info(f"Found {len(valid_files)} documents to build")
