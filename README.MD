@@ -382,6 +382,18 @@ mermaid:
 
 ---
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for a detailed version history.
+
+**Recent highlights:**
+- **v2.1.1** — Title page heading/subtitle word-wrap fixes, GitHub Actions release workflow
+- **v2.1.0** — Language-aware code block styling, configurable logos, interactive setup
+- **v2.0.0** — Mermaid diagram rendering, table overflow fix
+- **v1.0.0** — Initial release
+
+---
+
 ## Contributing
 
 1. Fork the repository

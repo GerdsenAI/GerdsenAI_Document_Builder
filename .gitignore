@@ -155,10 +155,19 @@ Icon
 # Linux
 *~
 
+# Proprietary Fonts (do not redistribute)
+SF Pro/
+SF Pro*/
+
 # AI / Tool caches
 .claude/
 .mypy_cache/
 
+# Generated artifacts
+build_output.log
+GerdsenAI_Document_Builder_README.pdf
+
+# Project-specific private assets
 CLAUDE.md
 Assets/CSE-Icon.png
 Assets/OPC-UA-Server-COLOR-Logo+Wordmark-Stacked-v3.2-20260125.png
