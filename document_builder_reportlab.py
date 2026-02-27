@@ -2016,13 +2016,22 @@ class DocumentBuilder:
         # Subtitle if present
         if metadata.get("subtitle"):
             y_position -= 0.2 * inch
-            canvas_obj.setFont("Helvetica", 16)
+            subtitle_font_size = 16
+            canvas_obj.setFont("Helvetica", subtitle_font_size)
             canvas_obj.setFillColor(colors.HexColor("#666666"))
-            subtitle_char_width = 16 * 0.5
-            subtitle_max_chars = int(usable_width / subtitle_char_width * 1.8)
+            subtitle_char_width = subtitle_font_size * 0.6
+            subtitle_max_chars = int(usable_width / subtitle_char_width)
             subtitle_lines = textwrap.wrap(
-                metadata["subtitle"], width=subtitle_max_chars
+                metadata["subtitle"], width=subtitle_max_chars, break_long_words=False
             )
+            # Verify lines fit, tighten wrap if needed
+            for line in subtitle_lines:
+                if canvas_obj.stringWidth(line, "Helvetica", subtitle_font_size) > usable_width:
+                    subtitle_max_chars = int(subtitle_max_chars * 0.75)
+                    subtitle_lines = textwrap.wrap(
+                        metadata["subtitle"], width=subtitle_max_chars, break_long_words=False
+                    )
+                    break
             for line in subtitle_lines:
                 canvas_obj.drawCentredString(width / 2, y_position, line)
                 y_position -= 0.3 * inch
