@@ -4,6 +4,17 @@ All notable changes to the GerdsenAI Document Builder.
 
 ---
 
+## [2.1.1] — 2026-02-27
+
+### Fixed
+- **Title page heading overflow** — long titles and subtitles now word-wrap correctly within cover page margins
+- **Subtitle wrapping on cover page** — subtitles no longer overflow the page width
+
+### Added
+- **GitHub Actions release workflow** — automatically creates a versioned release with packaged tarball on every merge to `main`
+
+---
+
 ## [2.1.0] — 2026-02-23
 
 ### Added
