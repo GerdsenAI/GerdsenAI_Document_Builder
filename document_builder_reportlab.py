@@ -1983,31 +1983,32 @@ class DocumentBuilder:
         # Title
         title = metadata.get("title", "Untitled Document")
 
-        # Word wrap the title
-
-        title_font_size = 28
-        char_width = title_font_size * 0.6
-        max_chars = int(usable_width / char_width * 1.8)
-
-        lines = textwrap.wrap(title, width=max_chars, break_long_words=False)
-
-        # Check if we need smaller font
-        use_smaller_font = False
-        for line in lines:
-            test_width = canvas_obj.stringWidth(line, "Helvetica-Bold", title_font_size)
-            if test_width > usable_width:
-                use_smaller_font = True
+        # Word wrap the title with font-size cascade and iterative fit
+        title_font_name = "Helvetica-Bold"
+        for title_font_size in [28, 24, 20]:
+            char_width = title_font_size * 0.55
+            max_chars = max(10, int(usable_width / char_width))
+            lines = textwrap.wrap(title, width=max_chars, break_long_words=False)
+            # Iteratively tighten until all lines fit within usable_width
+            all_fit = False
+            for _ in range(10):
+                all_fit = all(
+                    canvas_obj.stringWidth(line, title_font_name, title_font_size) <= usable_width
+                    for line in lines
+                )
+                if all_fit:
+                    break
+                max_chars = max(10, int(max_chars * 0.85))
+                lines = textwrap.wrap(title, width=max_chars, break_long_words=False)
+            if all_fit:
                 break
 
-        if use_smaller_font:
-            title_font_size = 24
-
-        canvas_obj.setFont("Helvetica-Bold", title_font_size)
+        canvas_obj.setFont(title_font_name, title_font_size)
         canvas_obj.setFillColor(colors.HexColor("#1a1a1a"))
 
         # Draw title lines
         y_position = logo_bottom
-        line_height = 0.4 * inch
+        line_height = title_font_size * 1.4
 
         for line in lines:
             canvas_obj.drawCentredString(width / 2, y_position, line)
@@ -2016,25 +2017,39 @@ class DocumentBuilder:
         # Subtitle if present
         if metadata.get("subtitle"):
             y_position -= 0.2 * inch
-            subtitle_font_size = 16
-            canvas_obj.setFont("Helvetica", subtitle_font_size)
+            subtitle_font_name = "Helvetica"
+            # Inset subtitle slightly from page margins for breathing room
+            subtitle_usable = usable_width - 20 * mm
             canvas_obj.setFillColor(colors.HexColor("#666666"))
-            subtitle_char_width = subtitle_font_size * 0.6
-            subtitle_max_chars = int(usable_width / subtitle_char_width)
-            subtitle_lines = textwrap.wrap(
-                metadata["subtitle"], width=subtitle_max_chars, break_long_words=False
-            )
-            # Verify lines fit, tighten wrap if needed
-            for line in subtitle_lines:
-                if canvas_obj.stringWidth(line, "Helvetica", subtitle_font_size) > usable_width:
-                    subtitle_max_chars = int(subtitle_max_chars * 0.75)
+
+            # Font-size cascade with iterative fit
+            for subtitle_font_size in [16, 14, 12]:
+                sub_char_width = subtitle_font_size * 0.55
+                subtitle_max_chars = max(15, int(subtitle_usable / sub_char_width))
+                subtitle_lines = textwrap.wrap(
+                    metadata["subtitle"], width=subtitle_max_chars, break_long_words=False
+                )
+                # Iteratively tighten until all lines fit
+                all_fit = False
+                for _ in range(10):
+                    all_fit = all(
+                        canvas_obj.stringWidth(line, subtitle_font_name, subtitle_font_size) <= subtitle_usable
+                        for line in subtitle_lines
+                    )
+                    if all_fit:
+                        break
+                    subtitle_max_chars = max(15, int(subtitle_max_chars * 0.85))
                     subtitle_lines = textwrap.wrap(
                         metadata["subtitle"], width=subtitle_max_chars, break_long_words=False
                     )
+                if all_fit:
                     break
+
+            canvas_obj.setFont(subtitle_font_name, subtitle_font_size)
+            sub_line_height = subtitle_font_size * 1.5
             for line in subtitle_lines:
                 canvas_obj.drawCentredString(width / 2, y_position, line)
-                y_position -= 0.3 * inch
+                y_position -= sub_line_height
 
         # Author
         canvas_obj.setFont("Helvetica-Bold", 14)
