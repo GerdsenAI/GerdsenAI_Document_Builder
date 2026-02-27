@@ -2,7 +2,7 @@ name: Create Release
 
 on:
   push:
-    tags: ['v*']
+    branches: [main]
 
 permissions:
   contents: write
@@ -12,20 +12,33 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate version
+        id: version
+        run: |
+          VERSION="$(date -u +%Y.%m.%d)-$(git rev-parse --short HEAD)"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Generated version: $VERSION"
 
       - name: Package release
         run: |
+          VERSION="${{ steps.version.outputs.version }}"
           mkdir -p release
           cp document_builder_reportlab.py release/
           cp config.yaml release/
           cp requirements.txt release/
           cp -r Assets release/
-          cp README.MD release/ 2>/dev/null || true
           cp LICENSE.txt release/ 2>/dev/null || true
-          tar czf "GerdsenAI_Document_Builder-${GITHUB_REF_NAME}.tar.gz" -C release .
+          mkdir -p release/To_Build release/PDFs release/Logs
+          echo "$VERSION" > release/.release_version
+          tar czf "GerdsenAI_Document_Builder-${VERSION}.tar.gz" -C release .
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: Release ${{ steps.version.outputs.version }}
           files: GerdsenAI_Document_Builder-*.tar.gz
           generate_release_notes: true
