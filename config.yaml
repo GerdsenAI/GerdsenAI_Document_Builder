@@ -39,6 +39,13 @@ footer:
   show_logo: true
   show_date: false
 
+# Table settings
+tables:
+  repeat_header: true
+  min_column_width: 40  # points
+  wide_table_column_threshold: 6
+  wide_table_font_size: 7.5
+
 # Typography settings
 fonts:
   body:

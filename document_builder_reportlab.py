@@ -50,6 +50,7 @@ from reportlab.lib.enums import (
     TA_JUSTIFY,
 )
 from reportlab.pdfgen import canvas
+from reportlab.lib.pdfbase.pdfmetrics import stringWidth
 from PIL import Image
 from bs4 import BeautifulSoup, Tag
 import yaml
@@ -2006,44 +2007,44 @@ class DocumentBuilder:
                             cell_style = self.styles["TableCell"]
                             header_style = self.styles["TableCellHeader"]
 
-                        # Measure natural column widths (approximate)
-                        char_width = cell_style.fontSize * 0.5
-                        natural_widths = [0.0] * num_cols
-                        for r in raw_rows:
-                            for ci, val in enumerate(r):
-                                w = len(val) * char_width + 12  # 12pt padding
-                                if w > natural_widths[ci]:
-                                    natural_widths[ci] = w
+                        # Calculate column widths using actual text measurement
+                        table_cfg = self.config.get("tables", {})
+                        min_col_width = table_cfg.get("min_column_width", 40)
+                        wide_threshold = table_cfg.get("wide_table_column_threshold", 6)
+                        wide_font_size = table_cfg.get("wide_table_font_size", 7.5)
 
-                        total_natural = sum(natural_widths)
-                        min_col_width = 40  # points
-
-                        if total_natural <= available_width:
-                            col_widths = natural_widths
+                        num_cols = len(raw_rows[0]) if raw_rows else 0
+                        if num_cols > wide_threshold:
+                            cell_font_size = wide_font_size
+                            cell_font_name = "Helvetica"
                         else:
-                            # Scale proportionally, respecting minimum
-                            col_widths = [
-                                max(min_col_width, w * available_width / total_natural)
-                                for w in natural_widths
-                            ]
-                            # If minimums pushed total over budget, re-scale the non-minimum cols
-                            total_after = sum(col_widths)
-                            if total_after > available_width:
-                                excess = total_after - available_width
-                                scalable = [
-                                    i
-                                    for i, w in enumerate(col_widths)
-                                    if w > min_col_width
-                                ]
-                                scalable_total = sum(col_widths[i] for i in scalable)
-                                if scalable_total > 0:
-                                    for i in scalable:
-                                        col_widths[i] -= excess * (
-                                            col_widths[i] / scalable_total
-                                        )
-                                        col_widths[i] = max(
-                                            min_col_width, col_widths[i]
-                                        )
+                            cell_font_size = self.styles["CustomBody"].fontSize
+                            cell_font_name = self.styles["CustomBody"].fontName
+
+                        # Measure natural width of each column using actual text rendering
+                        natural_widths = [0] * num_cols
+                        for row in raw_rows:
+                            for i, val in enumerate(row):
+                                if i < num_cols:
+                                    measured = stringWidth(str(val), cell_font_name, cell_font_size) + 12
+                                    natural_widths[i] = max(natural_widths[i], measured)
+
+                        # Calculate available width
+                        page_width = A4[0] - (
+                            self.config["margins"]["left"] + self.config["margins"]["right"]
+                        ) * mm
+                        total_natural = sum(natural_widths)
+
+                        if total_natural <= page_width:
+                            col_widths = [max(w, min_col_width) for w in natural_widths]
+                        else:
+                            scale = page_width / total_natural
+                            col_widths = [max(w * scale, min_col_width) for w in natural_widths]
+
+                        # Final normalization to exactly fit page width
+                        total = sum(col_widths)
+                        if total > 0:
+                            col_widths = [w * (page_width / total) for w in col_widths]
 
                         # Wrap cell text in Paragraph objects for word-wrapping
                         table_data = []
@@ -2070,7 +2071,8 @@ class DocumentBuilder:
                             color_cfg.get("table_border", "#e1e4e8")
                         )
 
-                        t = Table(table_data, colWidths=col_widths, repeatRows=1)
+                        repeat = 1 if self.config.get("tables", {}).get("repeat_header", True) else 0
+                        t = Table(table_data, colWidths=col_widths, repeatRows=repeat)
                         t.setStyle(
                             TableStyle(
                                 [
