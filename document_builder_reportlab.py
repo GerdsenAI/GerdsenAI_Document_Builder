@@ -40,6 +40,7 @@ from reportlab.platypus import (
     PageBreak,
     KeepTogether,
 )
+from reportlab.platypus.flowables import HRFlowable, CondPageBreak
 from reportlab.platypus.tableofcontents import (
     TableOfContents,
 )
@@ -198,6 +199,7 @@ class DocumentBuilder:
         self.toc_entries = []
         self.current_toc = None
         self.heading_counter = 0
+        self._pending_heading = None
 
         self.logger.info("DocumentBuilder initialized successfully")
 
@@ -681,6 +683,24 @@ class DocumentBuilder:
             f"Created heading: Level {level}, Text: {text}, Bookmark: {bookmark_name}"
         )
         return para
+
+    def _flush_pending_heading(self, story: List, next_elements: List = None) -> None:
+        """Flush any buffered heading, optionally grouping with following elements."""
+        if self._pending_heading is None:
+            return
+
+        heading_para = self._pending_heading
+        self._pending_heading = None
+
+        if next_elements:
+            story.append(KeepTogether([heading_para] + next_elements))
+        else:
+            story.append(heading_para)
+
+    def _should_keep_together(self, element_type: str) -> bool:
+        """Check if element type should be kept together per config."""
+        avoid_list = self.config.get("advanced", {}).get("page_break_avoid", [])
+        return element_type in avoid_list
 
     def _process_list_element(self, element, story, depth=0):
         """Recursively process ul/ol elements with proper nesting indentation."""
@@ -1654,47 +1674,33 @@ class DocumentBuilder:
                     continue
 
                 # Process headings with TOC support
-                if element.name == "h1":
-                    text = element.get_text()
-                    para = self._create_heading_with_bookmark(
-                        text, self.styles["CustomHeading1"], 0
-                    )
-                    story.append(para)
+                if element.name in ("h1", "h2", "h3", "h4", "h5", "h6"):
+                    # Flush any previous pending heading first
+                    self._flush_pending_heading(story)
 
-                elif element.name == "h2":
                     text = element.get_text()
+                    level_map = {
+                        "h1": ("CustomHeading1", 0),
+                        "h2": ("CustomHeading2", 1),
+                        "h3": ("CustomHeading3", 2),
+                        "h4": ("CustomHeading4", 3),
+                        "h5": ("CustomHeading5", 4),
+                        "h6": ("CustomHeading5", 5),
+                    }
+                    style_name, toc_level = level_map[element.name]
                     para = self._create_heading_with_bookmark(
-                        text, self.styles["CustomHeading2"], 1
+                        text, self.styles[style_name], toc_level
                     )
-                    story.append(para)
 
-                elif element.name == "h3":
-                    text = element.get_text()
-                    para = self._create_heading_with_bookmark(
-                        text, self.styles["CustomHeading3"], 2
-                    )
-                    story.append(para)
+                    # Add CondPageBreak before major headings to prevent orphaning
+                    if element.name in ("h1", "h2"):
+                        story.append(CondPageBreak(2 * inch))
 
-                elif element.name == "h4":
-                    text = element.get_text()
-                    para = self._create_heading_with_bookmark(
-                        text, self.styles["CustomHeading4"], 3
-                    )
-                    story.append(para)
-
-                elif element.name == "h5":
-                    text = element.get_text()
-                    para = self._create_heading_with_bookmark(
-                        text, self.styles["CustomHeading5"], 4
-                    )
-                    story.append(para)
-
-                elif element.name == "h6":
-                    text = element.get_text()
-                    para = self._create_heading_with_bookmark(
-                        text, self.styles["CustomHeading5"], 5
-                    )
-                    story.append(para)
+                    # Buffer heading to group with next content element
+                    if self._should_keep_together("headings"):
+                        self._pending_heading = para
+                    else:
+                        story.append(para)
 
                 elif element.name == "p":
                     # Handle paragraphs containing images
@@ -1704,7 +1710,9 @@ class DocumentBuilder:
                             img_tag, element
                         )
                         if img_elements:
-                            story.extend(img_elements)
+                            self._flush_pending_heading(story, img_elements)
+                        else:
+                            self._flush_pending_heading(story)
                         continue
 
                     # Get paragraph text and clean HTML attributes
@@ -1745,26 +1753,34 @@ class DocumentBuilder:
                                 parent=self.styles["CustomBody"],
                                 alignment=TA_LEFT,
                             )
-                            story.append(Paragraph(combined_text, left_style))
+                            para_flowable = Paragraph(combined_text, left_style)
                         else:
-                            story.append(
-                                Paragraph(combined_text, self.styles["CustomBody"])
+                            para_flowable = Paragraph(
+                                combined_text, self.styles["CustomBody"]
                             )
                     else:
-                        # Check paragraph length for justification
-                        if len(para_text) < 150:
+                        # Check word count for justification heuristic
+                        word_count = len(element.get_text().split())
+                        if word_count < 20:
                             left_style = ParagraphStyle(
                                 "TempLeft",
                                 parent=self.styles["CustomBody"],
                                 alignment=TA_LEFT,
                             )
-                            story.append(Paragraph(para_text, left_style))
+                            para_flowable = Paragraph(para_text, left_style)
                         else:
-                            story.append(
-                                Paragraph(para_text, self.styles["CustomBody"])
+                            para_flowable = Paragraph(
+                                para_text, self.styles["CustomBody"]
                             )
 
+                    # Flush pending heading grouped with this paragraph
+                    if self._pending_heading is not None:
+                        self._flush_pending_heading(story, [para_flowable])
+                    else:
+                        story.append(para_flowable)
+
                 elif element.name == "pre":
+                    self._flush_pending_heading(story)
                     # Code block processing - check for Mermaid diagrams first
                     code_elem = element.find("code")
 
@@ -1909,6 +1925,7 @@ class DocumentBuilder:
                 elif element.name == "div" and "highlight" in (
                     element.get("class") or []
                 ):
+                    self._flush_pending_heading(story)
                     # Handle highlighted code blocks
                     code_elem = element.find("pre")
                     inner_code = None
@@ -1931,6 +1948,7 @@ class DocumentBuilder:
                             ]))
 
                 elif element.name == "blockquote":
+                    self._flush_pending_heading(story)
                     quote_text = element.get_text()
                     story.append(KeepTogether([
                         Paragraph(quote_text, self.styles["CustomQuote"]),
@@ -1938,10 +1956,12 @@ class DocumentBuilder:
                     ]))
 
                 elif element.name == "ul" or element.name == "ol":
+                    self._flush_pending_heading(story)
                     self._process_list_element(element, story, depth=0)
                     story.append(Spacer(1, 0.1 * inch))
 
                 elif element.name == "table":
+                    self._flush_pending_heading(story)
                     # Process tables with width-fitting and text wrapping
                     raw_rows = []
                     for row in element.find_all("tr"):
@@ -2068,6 +2088,9 @@ class DocumentBuilder:
                             )
                         )
                         story.append(KeepTogether([t, Spacer(1, 0.2 * inch)]))
+
+        # Flush any remaining buffered heading
+        self._flush_pending_heading(story)
 
         self.logger.info(f"Generated {len(story)} story elements")
         return story
@@ -2328,6 +2351,7 @@ class DocumentBuilder:
             # Reset heading counter and figure counter for new document
             self.heading_counter = 0
             self.figure_counter = 0
+            self._pending_heading = None
             self._source_dir = input_path.parent
 
             # Create TOC for markdown files
