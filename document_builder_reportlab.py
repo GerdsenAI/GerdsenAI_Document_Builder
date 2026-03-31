@@ -772,6 +772,13 @@ class DocumentBuilder:
         mermaid_config = self.config.get("mermaid", {})
         max_label_length = mermaid_config.get("max_label_length", 80)
 
+        # Detect diagram type - skip flowchart-specific rules for non-flowchart types
+        first_line = mermaid_code.strip().split('\n')[0].strip().lower()
+        skip_flowchart_rules = any(
+            first_line.startswith(t) for t in
+            ('xychart', 'pie', 'gantt', 'gitgraph', 'timeline', 'sankey')
+        )
+
         # Edge Case 0: REMOVE ALL EMOJIS (they break Mermaid parsing!)
         # This is the FIRST thing we do - emojis cause parse errors
         emoji_pattern = re.compile(
@@ -794,194 +801,207 @@ class DocumentBuilder:
             fixes_applied.append(f"Removed {emoji_count} emojis (cause parse errors)")
             self.logger.debug(f"Stripped {emoji_count} emojis from Mermaid diagram")
 
-        # Edge Case 1: Multi-line text in node labels WITH quotes (splitLineToFitWidth error)
-        # This is the most common issue - replace ALL newlines inside quotes with <br/>
-        # This includes newlines after existing <br/> tags
-        def replace_multiline_labels_quoted(match):
-            label_content = match.group(1)
-            if "\n" in label_content:
-                # Replace all remaining newlines, even after <br/> tags
-                label_content = re.sub(r"\n+", "<br/>", label_content)
-                # Clean up any double <br/> tags
-                label_content = re.sub(r"(<br/>)+", "<br/>", label_content)
-                if "Replaced newlines in labels with <br/> tags" not in fixes_applied:
-                    fixes_applied.append("Replaced newlines in labels with <br/> tags")
-            return f'["{label_content}"]'
+        if not skip_flowchart_rules:
+            # Edge Case 1: Multi-line text in node labels WITH quotes (splitLineToFitWidth error)
+            # This is the most common issue - replace ALL newlines inside quotes with <br/>
+            # This includes newlines after existing <br/> tags
+            def replace_multiline_labels_quoted(match):
+                label_content = match.group(1)
+                if "\n" in label_content:
+                    # Replace all remaining newlines, even after <br/> tags
+                    label_content = re.sub(r"\n+", "<br/>", label_content)
+                    # Clean up any double <br/> tags
+                    label_content = re.sub(r"(<br/>)+", "<br/>", label_content)
+                    if "Replaced newlines in labels with <br/> tags" not in fixes_applied:
+                        fixes_applied.append("Replaced newlines in labels with <br/> tags")
+                return f'["{label_content}"]'
 
-        mermaid_code = re.sub(
-            r'\["([^"]*?)"\]',
-            replace_multiline_labels_quoted,
-            mermaid_code,
-            flags=re.DOTALL,
-        )
-
-        # Edge Case 2: Multi-line text in node labels WITHOUT quotes
-        # Format: A[Text with\nnewlines]
-        def replace_multiline_labels_unquoted(match):
-            prefix = match.group(1)
-            label_content = match.group(2)
-            if "\n" in label_content:
-                # Replace all newlines
-                label_content = re.sub(r"\n+", "<br/>", label_content)
-                # Clean up any double <br/> tags
-                label_content = re.sub(r"(<br/>)+", "<br/>", label_content)
-                if "Replaced newlines in labels with <br/> tags" not in fixes_applied:
-                    fixes_applied.append("Replaced newlines in labels with <br/> tags")
-            return f'{prefix}["{label_content}"]'
-
-        # Match node definitions like: A[Text] but not A["Text"]
-        mermaid_code = re.sub(
-            r'(\b[A-Za-z0-9_]+)\[(?!")([^\]]*?)\]',
-            replace_multiline_labels_unquoted,
-            mermaid_code,
-            flags=re.DOTALL,
-        )
-
-        # Edge Case 3: Multi-line text in parentheses labels
-        def replace_multiline_parens(match):
-            label_content = match.group(1)
-            if "\n" in label_content:
-                # Replace all newlines
-                label_content = re.sub(r"\n+", "<br/>", label_content)
-                # Clean up any double <br/> tags
-                label_content = re.sub(r"(<br/>)+", "<br/>", label_content)
-                if "Replaced newlines in labels with <br/> tags" not in fixes_applied:
-                    fixes_applied.append("Replaced newlines in labels with <br/> tags")
-            return f'("{label_content}")'
-
-        mermaid_code = re.sub(
-            r'\("([^"]*?)"\)', replace_multiline_parens, mermaid_code, flags=re.DOTALL
-        )
-
-        # Edge Case 4: Edge/Arrow labels (CRITICAL - MOST COMMON ERROR!)
-        # The TabX diagrams have INVALID double-arrow syntax like:
-        # WRONG:  -->|-->"label"|-->
-        # WRONG:  -->|-->label|-->
-        # RIGHT:  -->|"label"|
-
-        arrow_token = r"(?:--?>|===?>|\.\.\.>|-\.-?>|-\.->|---)"
-
-        def strip_internal_arrow(match: re.Match) -> str:
-            """Remove stray arrows inside edge labels and ensure quoting."""
-            label = match.group("label").strip()
-            if not (label.startswith('"') and label.endswith('"')):
-                label = f'"{label}"'
-            if "Fixed triple-arrow edge labels (invalid syntax)" not in fixes_applied:
-                fixes_applied.append("Fixed triple-arrow edge labels (invalid syntax)")
-            return f"|{label}|"
-
-        # Remove arrows that appear between the pipes of an edge label
-        mermaid_code = re.sub(
-            rf"\|\s*{arrow_token}\s*(?P<label>\"[^\"]*\"|[^|\"]+?)\|",
-            strip_internal_arrow,
-            mermaid_code,
-            flags=re.DOTALL,
-        )
-
-        def strip_trailing_arrow(match: re.Match) -> str:
-            """Remove stray arrows appearing immediately after a labelled edge."""
-            spacing = match.group("spacing") or " "
-            if "Fixed triple-arrow edge labels (invalid syntax)" not in fixes_applied:
-                fixes_applied.append("Fixed triple-arrow edge labels (invalid syntax)")
-            return f"|{spacing}"
-
-        # Remove arrows that appear immediately after a labelled edge (e.g. |--> Node)
-        mermaid_code = re.sub(
-            rf"\|\s*{arrow_token}(?P<spacing>\s*)",
-            strip_trailing_arrow,
-            mermaid_code,
-        )
-
-        def fix_all_edge_label_issues(match):
-            """Clean up edge labels: remove arrows, ensure quotes."""
-            arrow_before = match.group(1)  # Arrow before first pipe
-            content = match.group(2)  # Everything between pipes
-
-            # Remove ALL arrows from content (leading/trailing, with/without spaces)
-            cleaned = content
-            cleaned = re.sub(
-                r"^(?:--?>|===?>|\.\.\.>|-\.-?>|-\.->|---)\s*", "", cleaned
+            mermaid_code = re.sub(
+                r'\["([^"]*?)"\]',
+                replace_multiline_labels_quoted,
+                mermaid_code,
+                flags=re.DOTALL,
             )
-            cleaned = re.sub(
-                r"\s*(?:--?>|===?>|\.\.\.>|-\.-?>|-\.->|---)$", "", cleaned
+
+            # Edge Case 2: Multi-line text in node labels WITHOUT quotes
+            # Format: A[Text with\nnewlines]
+            def replace_multiline_labels_unquoted(match):
+                prefix = match.group(1)
+                label_content = match.group(2)
+                if "\n" in label_content:
+                    # Replace all newlines
+                    label_content = re.sub(r"\n+", "<br/>", label_content)
+                    # Clean up any double <br/> tags
+                    label_content = re.sub(r"(<br/>)+", "<br/>", label_content)
+                    if "Replaced newlines in labels with <br/> tags" not in fixes_applied:
+                        fixes_applied.append("Replaced newlines in labels with <br/> tags")
+                return f'{prefix}["{label_content}"]'
+
+            # Match node definitions like: A[Text] but not A["Text"]
+            mermaid_code = re.sub(
+                r'(\b[A-Za-z0-9_]+)\[(?!")([^\]]*?)\]',
+                replace_multiline_labels_unquoted,
+                mermaid_code,
+                flags=re.DOTALL,
             )
-            cleaned = cleaned.strip()
 
-            # Ensure content is quoted
-            if not (cleaned.startswith('"') and cleaned.endswith('"')):
-                cleaned = f'"{cleaned}"'
+            # Edge Case 3: Multi-line text in parentheses labels
+            def replace_multiline_parens(match):
+                label_content = match.group(1)
+                if "\n" in label_content:
+                    # Replace all newlines
+                    label_content = re.sub(r"\n+", "<br/>", label_content)
+                    # Clean up any double <br/> tags
+                    label_content = re.sub(r"(<br/>)+", "<br/>", label_content)
+                    if "Replaced newlines in labels with <br/> tags" not in fixes_applied:
+                        fixes_applied.append("Replaced newlines in labels with <br/> tags")
+                return f'("{label_content}")'
 
-            result = f"{arrow_before}|{cleaned}|"
+            mermaid_code = re.sub(
+                r'\("([^"]*?)"\)', replace_multiline_parens, mermaid_code, flags=re.DOTALL
+            )
 
-            if content != cleaned:  # Only log if we made changes
-                if (
-                    "Fixed double-arrow edge labels (invalid syntax)"
-                    not in fixes_applied
-                ):
-                    fixes_applied.append(
+            # Edge Case 4: Edge/Arrow labels (CRITICAL - MOST COMMON ERROR!)
+            # The TabX diagrams have INVALID double-arrow syntax like:
+            # WRONG:  -->|-->"label"|-->
+            # WRONG:  -->|-->label|-->
+            # RIGHT:  -->|"label"|
+
+            arrow_token = r"(?:--?>|===?>|\.\.\.>|-\.-?>|-\.->|---)"
+
+            def strip_internal_arrow(match: re.Match) -> str:
+                """Remove stray arrows inside edge labels and ensure quoting."""
+                label = match.group("label").strip()
+                if not (label.startswith('"') and label.endswith('"')):
+                    label = f'"{label}"'
+                if "Fixed triple-arrow edge labels (invalid syntax)" not in fixes_applied:
+                    fixes_applied.append("Fixed triple-arrow edge labels (invalid syntax)")
+                return f"|{label}|"
+
+            # Remove arrows that appear between the pipes of an edge label
+            mermaid_code = re.sub(
+                rf"\|\s*{arrow_token}\s*(?P<label>\"[^\"]*\"|[^|\"]+?)\|",
+                strip_internal_arrow,
+                mermaid_code,
+                flags=re.DOTALL,
+            )
+
+            def strip_trailing_arrow(match: re.Match) -> str:
+                """Remove stray arrows appearing immediately after a labelled edge."""
+                spacing = match.group("spacing") or " "
+                if "Fixed triple-arrow edge labels (invalid syntax)" not in fixes_applied:
+                    fixes_applied.append("Fixed triple-arrow edge labels (invalid syntax)")
+                return f"|{spacing}"
+
+            # Remove arrows that appear immediately after a labelled edge (e.g. |--> Node)
+            mermaid_code = re.sub(
+                rf"\|\s*{arrow_token}(?P<spacing>\s*)",
+                strip_trailing_arrow,
+                mermaid_code,
+            )
+
+            def fix_all_edge_label_issues(match):
+                """Clean up edge labels: remove arrows, ensure quotes."""
+                arrow_before = match.group(1)  # Arrow before first pipe
+                content = match.group(2)  # Everything between pipes
+
+                # Remove ALL arrows from content (leading/trailing, with/without spaces)
+                cleaned = content
+                cleaned = re.sub(
+                    r"^(?:--?>|===?>|\.\.\.>|-\.-?>|-\.->|---)\s*", "", cleaned
+                )
+                cleaned = re.sub(
+                    r"\s*(?:--?>|===?>|\.\.\.>|-\.-?>|-\.->|---)$", "", cleaned
+                )
+                cleaned = cleaned.strip()
+
+                # Ensure content is quoted
+                if not (cleaned.startswith('"') and cleaned.endswith('"')):
+                    cleaned = f'"{cleaned}"'
+
+                result = f"{arrow_before}|{cleaned}|"
+
+                if content != cleaned:  # Only log if we made changes
+                    if (
                         "Fixed double-arrow edge labels (invalid syntax)"
-                    )
+                        not in fixes_applied
+                    ):
+                        fixes_applied.append(
+                            "Fixed double-arrow edge labels (invalid syntax)"
+                        )
 
-            return result
+                return result
 
-        # Match: arrow + pipe + ANY content + pipe
-        # The [^|\n]+? will match anything except pipes or newlines
-        before_edge_fix = mermaid_code
-        mermaid_code = re.sub(
-            r"((?:--?>|===?>|\.\.\.>|-\.-?>|-\.->|---))\|([^|\n]+?)\|",
-            fix_all_edge_label_issues,
-            mermaid_code,
-        )
-        if (
-            before_edge_fix != mermaid_code
-            and "Fixed double-arrow edge labels (invalid syntax)" not in fixes_applied
-        ):
-            fixes_applied.append("Fixed double-arrow edge labels (invalid syntax)")
+            # Match: arrow + pipe + ANY content + pipe
+            # The [^|\n]+? will match anything except pipes or newlines
+            before_edge_fix = mermaid_code
+            mermaid_code = re.sub(
+                r"((?:--?>|===?>|\.\.\.>|-\.-?>|-\.->|---))\|([^|\n]+?)\|",
+                fix_all_edge_label_issues,
+                mermaid_code,
+            )
+            if (
+                before_edge_fix != mermaid_code
+                and "Fixed double-arrow edge labels (invalid syntax)" not in fixes_applied
+            ):
+                fixes_applied.append("Fixed double-arrow edge labels (invalid syntax)")
 
-        def replace_multiline_edge_labels(match):
-            arrow_type = match.group(1)
-            label_content = match.group(2)
-            if "\n" in label_content:
-                # Replace all newlines
-                label_content = re.sub(r"\n+", "<br/>", label_content)
-                # Clean up any double <br/> tags
-                label_content = re.sub(r"(<br/>)+", "<br/>", label_content)
-                if (
-                    "Replaced newlines in edge labels with <br/> tags"
-                    not in fixes_applied
-                ):
-                    fixes_applied.append(
+            def replace_multiline_edge_labels(match):
+                arrow_type = match.group(1)
+                label_content = match.group(2)
+                if "\n" in label_content:
+                    # Replace all newlines
+                    label_content = re.sub(r"\n+", "<br/>", label_content)
+                    # Clean up any double <br/> tags
+                    label_content = re.sub(r"(<br/>)+", "<br/>", label_content)
+                    if (
                         "Replaced newlines in edge labels with <br/> tags"
-                    )
-            return f'{arrow_type}|"{label_content}"|'
+                        not in fixes_applied
+                    ):
+                        fixes_applied.append(
+                            "Replaced newlines in edge labels with <br/> tags"
+                        )
+                return f'{arrow_type}|"{label_content}"|'
 
-        # Match various arrow types with quoted labels
-        # Covers: -->|, ---|, ==>|, -.->|, -.-|, etc.
-        mermaid_code = re.sub(
-            r'((?:--?>|===?>|\.\.\.>|-\.-?>|-\.->|---))\|"([^"]*?)"\|',
-            replace_multiline_edge_labels,
-            mermaid_code,
-            flags=re.DOTALL,
-        )
+            # Match various arrow types with quoted labels
+            # Covers: -->|, ---|, ==>|, -.->|, -.-|, etc.
+            mermaid_code = re.sub(
+                r'((?:--?>|===?>|\.\.\.>|-\.-?>|-\.->|---))\|"([^"]*?)"\|',
+                replace_multiline_edge_labels,
+                mermaid_code,
+                flags=re.DOTALL,
+            )
 
-        # Edge Case 5: Subgraph titles
-        def replace_multiline_subgraph(match):
-            keyword = match.group(1)
-            title_content = match.group(2)
-            if "\n" in title_content:
-                title_content = re.sub(
-                    r"\n+", " ", title_content
-                )  # Subgraph titles should be single line
-                if "Replaced newlines in subgraph titles" not in fixes_applied:
-                    fixes_applied.append("Replaced newlines in subgraph titles")
-            return f'{keyword} "{title_content}"'
+            # Edge Case 5: Subgraph titles
+            def replace_multiline_subgraph(match):
+                keyword = match.group(1)
+                title_content = match.group(2)
+                if "\n" in title_content:
+                    title_content = re.sub(
+                        r"\n+", " ", title_content
+                    )  # Subgraph titles should be single line
+                    if "Replaced newlines in subgraph titles" not in fixes_applied:
+                        fixes_applied.append("Replaced newlines in subgraph titles")
+                return f'{keyword} "{title_content}"'
 
-        mermaid_code = re.sub(
-            r'\b(subgraph)\s+"([^"]*?)"',
-            replace_multiline_subgraph,
-            mermaid_code,
-            flags=re.DOTALL,
-        )
+            mermaid_code = re.sub(
+                r'\b(subgraph)\s+"([^"]*?)"',
+                replace_multiline_subgraph,
+                mermaid_code,
+                flags=re.DOTALL,
+            )
+
+            # Edge Case 8: Invalid arrow syntax
+            # NOTE: Do NOT add --> after | in edge labels (-->|"label"| is correct, NOT -->|"label"|-->)
+            arrow_fixes = {
+                r"-->\s*\|": ("-->|", "Fixed arrow syntax (space before pipe)"),
+                # REMOVED: r"\|(?![-=])": ("|-->", "Fixed incomplete arrow"),  # This breaks edge labels!
+            }
+
+            for pattern, (replacement, description) in arrow_fixes.items():
+                if re.search(pattern, mermaid_code):
+                    mermaid_code = re.sub(pattern, replacement, mermaid_code)
+                    fixes_applied.append(description)
 
         # Edge Case 6: Very long labels (auto-wrap at word boundaries)
         def handle_long_labels(match):
@@ -1027,18 +1047,6 @@ class DocumentBuilder:
             fixes_applied.append("Cleaned excessive whitespace")
 
         mermaid_code = "\n".join(cleaned_lines)
-
-        # Edge Case 8: Invalid arrow syntax
-        # NOTE: Do NOT add --> after | in edge labels (-->|"label"| is correct, NOT -->|"label"|-->)
-        arrow_fixes = {
-            r"-->\s*\|": ("-->|", "Fixed arrow syntax (space before pipe)"),
-            # REMOVED: r"\|(?![-=])": ("|-->", "Fixed incomplete arrow"),  # This breaks edge labels!
-        }
-
-        for pattern, (replacement, description) in arrow_fixes.items():
-            if re.search(pattern, mermaid_code):
-                mermaid_code = re.sub(pattern, replacement, mermaid_code)
-                fixes_applied.append(description)
 
         # Log fixes if any were applied
         if fixes_applied:
@@ -1338,15 +1346,32 @@ class DocumentBuilder:
                     "Mermaid rendering failed - output file not created"
                 )
 
+            # Track PNG for cleanup immediately
+            self.temp_files.append(str(png_path))
+
             self.logger.info("Successfully rendered Mermaid diagram")
             return png_path
 
         except ImportError as e:
+            err_str = str(e).lower()
+            if "mermaid" in err_str:
+                self.logger.error(
+                    "mermaid-cli not installed. Run: pip install mermaid-cli"
+                )
+            elif "playwright" in err_str:
+                self.logger.error(
+                    "playwright not installed. Run: pip install playwright && playwright install chromium"
+                )
+            else:
+                self.logger.error(f"Missing dependency for Mermaid rendering: {e}")
+
+            if mermaid_config.get("fallback_to_code", True):
+                return None
+            raise
+        except FileNotFoundError as e:
             self.logger.error(
-                "mermaid-cli not installed. Run: "
-                "pip install mermaid-cli && playwright install chromium"
+                f"Chromium browser not found. Run: playwright install chromium. Detail: {e}"
             )
-            self.logger.error(f"Error: {e}")
             if mermaid_config.get("fallback_to_code", True):
                 return None
             raise
@@ -1472,6 +1497,9 @@ class DocumentBuilder:
                             if not auto_accept:
                                 print(" done", flush=True)
                             print("   [OK] Simplified diagram rendered successfully\n")
+
+                            # Track PNG for cleanup immediately
+                            self.temp_files.append(str(simplified_png_path))
 
                             # DON'T delete the PNG - it's needed by ReportLab!
                             # Only clean up the .mmd file
@@ -1664,7 +1692,7 @@ class DocumentBuilder:
         mermaid_count = len(mermaid_block_pattern.findall(content))
         if mermaid_count:
             def _mermaid_to_html(m):
-                code = m.group(1).strip().replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                code = html_module.escape(m.group(1).strip())
                 return f'\n<pre><code class="language-mermaid">{code}</code></pre>\n'
             content = mermaid_block_pattern.sub(_mermaid_to_html, content)
             self.logger.info(
@@ -1917,7 +1945,8 @@ class DocumentBuilder:
                                         scaled_width = max_width
                                         scaled_height = max_width * aspect_ratio
                                     else:
-                                        # Convert pixels to points (assuming 72 DPI)
+                                        # Pixel-to-point conversion: 96 DPI screen -> 72 DPI PDF
+                                        # Ratio: 72/96 = 0.75
                                         scaled_width = img_width * 0.75
                                         scaled_height = img_height * 0.75
 
@@ -1947,12 +1976,6 @@ class DocumentBuilder:
 
                                     self.logger.info(
                                         f"Added Mermaid diagram: {scaled_width:.0f}x{scaled_height:.0f} points"
-                                    )
-
-                                    # Track temp file for cleanup after PDF is built
-                                    self.temp_files.append(img_path)
-                                    self.logger.debug(
-                                        f"Tracking temp image for later cleanup: {img_path}"
                                     )
 
                                     # Skip regular code block processing
