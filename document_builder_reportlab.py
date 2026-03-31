@@ -381,6 +381,30 @@ class DocumentBuilder:
                 leftIndent=54,
                 bulletIndent=42,
             ),
+            "ListItem4": ParagraphStyle(
+                "ListItem4",
+                parent=styles["BodyText"],
+                fontName="Helvetica",
+                fontSize=11,
+                textColor=colors.HexColor("#2c3e50"),
+                spaceBefore=2,
+                spaceAfter=2,
+                leading=14,
+                leftIndent=56,
+                bulletIndent=44,
+            ),
+            "ListItem5": ParagraphStyle(
+                "ListItem5",
+                parent=styles["BodyText"],
+                fontName="Helvetica",
+                fontSize=11,
+                textColor=colors.HexColor("#2c3e50"),
+                spaceBefore=2,
+                spaceAfter=2,
+                leading=14,
+                leftIndent=68,
+                bulletIndent=56,
+            ),
             "TableCell": ParagraphStyle(
                 "TableCell",
                 parent=styles["BodyText"],
@@ -705,13 +729,14 @@ class DocumentBuilder:
 
     def _process_list_element(self, element, story, depth=0):
         """Recursively process ul/ol elements with proper nesting indentation."""
-        max_depth = 2  # 0, 1, 2 → ListItem1, ListItem2, ListItem3
+        max_depth = 4  # 0-4: ListItem1 through ListItem5
         style_key = f"ListItem{min(depth, max_depth) + 1}"
         style = self.styles[style_key]
 
         is_ordered = element.name == "ol"
         for idx, li in enumerate(element.find_all("li", recursive=False), 1):
-            bullet = f"{idx}. " if is_ordered else "\u2022 "
+            bullet_char = self.config.get("advanced", {}).get("bullet_character", "\u2022")
+            bullet = f"{idx}. " if is_ordered else f"{bullet_char} "
 
             # Get only the direct text of this <li>, not text from nested lists
             text_parts = []
@@ -1955,6 +1980,18 @@ class DocumentBuilder:
                         Paragraph(quote_text, self.styles["CustomQuote"]),
                         Spacer(1, 0.1 * inch),
                     ]))
+
+                elif element.name == "hr":
+                    self._flush_pending_heading(story)
+                    story.append(HRFlowable(
+                        width="100%",
+                        thickness=1,
+                        color=colors.HexColor(
+                            self.config.get("colors", {}).get("table_border", "#e1e4e8")
+                        ),
+                        spaceBefore=12,
+                        spaceAfter=12,
+                    ))
 
                 elif element.name == "ul" or element.name == "ol":
                     self._flush_pending_heading(story)
