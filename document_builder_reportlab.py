@@ -5,6 +5,7 @@ Converts Markdown/Text to professional PDFs with custom
 styling, Table of Contents, and comprehensive logging.
 """
 
+import os
 import sys
 import argparse
 import re
@@ -553,6 +554,17 @@ class DocumentBuilder:
                 borderPadding=12,
                 backColor=colors.HexColor("#f8f9fa"),
             ),
+            "FigureCaption": ParagraphStyle(
+                "FigureCaption",
+                parent=styles["BodyText"],
+                fontName="Helvetica-Oblique",
+                fontSize=9,
+                textColor=colors.HexColor("#6b7280"),
+                alignment=TA_CENTER,
+                spaceBefore=4,
+                spaceAfter=12,
+                leading=12,
+            ),
             "TOCHeading": ParagraphStyle(
                 "TOCHeading",
                 parent=styles["Heading1"],
@@ -1057,6 +1069,103 @@ class DocumentBuilder:
 
         return "\n".join(simplified)
 
+    def _process_image_element(self, img_tag, parent_element) -> List:
+        """Process a markdown image into ReportLab flowables with figure caption."""
+        src = img_tag.get("src", "")
+        alt = img_tag.get("alt", "")
+
+        if not src:
+            self.logger.warning("Image tag with no src attribute, skipping")
+            return []
+
+        # Resolve image path — try multiple locations
+        img_path = None
+        src_path = Path(src)
+
+        # Try as absolute path first
+        if src_path.is_absolute() and src_path.exists():
+            img_path = src_path
+
+        # Try relative to original source directory (set from env or input)
+        if img_path is None:
+            source_dir = getattr(self, "_source_dir", None)
+            if source_dir:
+                candidate = source_dir / src
+                if candidate.exists():
+                    img_path = candidate
+
+        # Try relative to original markdown via GERDSENAI_SOURCE_DIR env
+        if img_path is None:
+            env_source = os.environ.get("GERDSENAI_SOURCE_DIR")
+            if env_source:
+                candidate = Path(env_source) / src
+                if candidate.exists():
+                    img_path = candidate
+
+        # Try relative to current working directory
+        if img_path is None:
+            candidate = Path.cwd() / src
+            if candidate.exists():
+                img_path = candidate
+
+        if img_path is None:
+            self.logger.warning(f"Image not found: {src} (searched from {source_dir})")
+            return []
+
+        try:
+            # Open image with PIL to get dimensions
+            with Image.open(str(img_path)) as pil_img:
+                img_width, img_height = pil_img.size
+
+            # Calculate available page width
+            page_width = A4[0] - (
+                self.config["margins"]["left"] * mm
+                + self.config["margins"]["right"] * mm
+            )
+            max_width = page_width * 0.92  # 92% of available width
+            max_height = A4[1] * 0.45  # Max 45% of page height
+
+            # Scale image to fit
+            aspect_ratio = img_height / img_width
+            scaled_width = min(img_width * 0.75, max_width)
+            scaled_height = scaled_width * aspect_ratio
+
+            # Constrain height
+            if scaled_height > max_height:
+                scaled_height = max_height
+                scaled_width = scaled_height / aspect_ratio
+
+            # Create ReportLab Image
+            rl_image = RLImage(
+                str(img_path), width=scaled_width, height=scaled_height
+            )
+
+            # Auto-number figure caption
+            self.figure_counter += 1
+            caption_text = f"Figure {self.figure_counter}"
+            if alt:
+                caption_text += f": {alt}"
+
+            caption = Paragraph(caption_text, self.styles["FigureCaption"])
+
+            # Wrap in KeepTogether to prevent page break between image and caption
+            figure_block = KeepTogether([
+                rl_image,
+                Spacer(1, 4),
+                caption,
+                Spacer(1, 8),
+            ])
+
+            self.logger.info(
+                f"Embedded image: {img_path.name} as Figure {self.figure_counter} "
+                f"({scaled_width:.0f}x{scaled_height:.0f})"
+            )
+            return [figure_block]
+
+        except Exception as e:
+            self.logger.error(f"Failed to process image {src}: {e}")
+            return []
+
     def _render_mermaid_diagram(self, mermaid_code: str) -> Optional[str]:
         """
         Render Mermaid diagram to PNG using local Chromium browser via Playwright.
@@ -1457,6 +1566,22 @@ class DocumentBuilder:
         """Process markdown content and convert to ReportLab story elements."""
         self.logger.info("Processing markdown content to story elements")
 
+        # Pre-process: convert Mermaid fenced blocks to raw HTML before
+        # codehilite strips the language-mermaid class (GitHub issue workaround)
+        mermaid_block_pattern = re.compile(
+            r'```mermaid\s*\n(.*?)```', re.DOTALL
+        )
+        mermaid_count = len(mermaid_block_pattern.findall(content))
+        if mermaid_count:
+            def _mermaid_to_html(m):
+                code = m.group(1).strip().replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                return f'\n<pre><code class="language-mermaid">{code}</code></pre>\n'
+            content = mermaid_block_pattern.sub(_mermaid_to_html, content)
+            self.logger.info(
+                f"Pre-processed {mermaid_count} Mermaid diagram(s) to preserve "
+                f"language-mermaid class from codehilite interference"
+            )
+
         # Convert markdown to HTML
         md = markdown.Markdown(
             extensions=[
@@ -1572,8 +1697,14 @@ class DocumentBuilder:
                     story.append(para)
 
                 elif element.name == "p":
-                    # Skip paragraphs containing images
-                    if element.find("img"):
+                    # Handle paragraphs containing images
+                    img_tag = element.find("img")
+                    if img_tag:
+                        img_elements = self._process_image_element(
+                            img_tag, element
+                        )
+                        if img_elements:
+                            story.extend(img_elements)
                         continue
 
                     # Get paragraph text and clean HTML attributes
@@ -2194,8 +2325,10 @@ class DocumentBuilder:
             output_path = self.output_dir / output_file
             self.logger.info(f"Output file: {output_path}")
 
-            # Reset heading counter for new document
+            # Reset heading counter and figure counter for new document
             self.heading_counter = 0
+            self.figure_counter = 0
+            self._source_dir = input_path.parent
 
             # Create TOC for markdown files
             toc = None
