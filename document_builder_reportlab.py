@@ -11,6 +11,7 @@ import argparse
 import re
 import tempfile
 import logging
+import html as html_module
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from datetime import datetime
@@ -1124,7 +1125,14 @@ class DocumentBuilder:
             self.logger.warning("Image tag with no src attribute, skipping")
             return []
 
-        # Resolve image path — try multiple locations
+        # Reject remote URLs
+        if src.startswith(("http://", "https://")):
+            self.logger.warning(
+                f"Remote image URLs not supported: {src}. Download the image locally first."
+            )
+            return []
+
+        # Resolve image path - try multiple locations
         img_path = None
         src_path = Path(src)
 
@@ -1132,7 +1140,7 @@ class DocumentBuilder:
         if src_path.is_absolute() and src_path.exists():
             img_path = src_path
 
-        # Try relative to original source directory (set from env or input)
+        # Try relative to original source directory
         if img_path is None:
             source_dir = getattr(self, "_source_dir", None)
             if source_dir:
@@ -1140,7 +1148,7 @@ class DocumentBuilder:
                 if candidate.exists():
                     img_path = candidate
 
-        # Try relative to original markdown via GERDSENAI_SOURCE_DIR env
+        # Try relative to GERDSENAI_SOURCE_DIR env var
         if img_path is None:
             env_source = os.environ.get("GERDSENAI_SOURCE_DIR")
             if env_source:
@@ -1155,12 +1163,49 @@ class DocumentBuilder:
                 img_path = candidate
 
         if img_path is None:
-            self.logger.warning(f"Image not found: {src} (searched from {source_dir})")
+            self.logger.warning(
+                f"Image not found: {src} "
+                f"(searched: {getattr(self, '_source_dir', 'N/A')}, "
+                f"env={os.environ.get('GERDSENAI_SOURCE_DIR', 'N/A')}, cwd={Path.cwd()})"
+            )
+            return []
+
+        # Check file format
+        supported_formats = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".tif", ".webp"}
+        unsupported_formats = {".svg", ".pdf", ".eps"}
+
+        if img_path.suffix.lower() in unsupported_formats:
+            self.logger.warning(
+                f"Unsupported image format: {img_path.suffix} ({img_path.name}). "
+                f"Convert to PNG first."
+            )
+            return []
+
+        if img_path.suffix.lower() not in supported_formats:
+            self.logger.warning(
+                f"Unknown image format: {img_path.suffix} ({img_path.name}). "
+                f"Supported: {', '.join(sorted(supported_formats))}"
+            )
+            return []
+
+        # Check read permission
+        if not os.access(str(img_path), os.R_OK):
+            self.logger.warning(f"Image not readable (permission denied): {img_path}")
             return []
 
         try:
-            # Open image with PIL to get dimensions
             with Image.open(str(img_path)) as pil_img:
+                # Handle RGBA transparency - composite onto white background
+                actual_path = img_path
+                if pil_img.mode == "RGBA":
+                    background = Image.new("RGB", pil_img.size, (255, 255, 255))
+                    background.paste(pil_img, mask=pil_img.split()[3])
+                    temp_rgb = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+                    background.save(temp_rgb.name)
+                    temp_rgb.close()
+                    actual_path = Path(temp_rgb.name)
+                    self.temp_files.append(str(actual_path))
+
                 img_width, img_height = pil_img.size
 
             # Calculate available page width
@@ -1168,10 +1213,10 @@ class DocumentBuilder:
                 self.config["margins"]["left"] * mm
                 + self.config["margins"]["right"] * mm
             )
-            max_width = page_width * 0.92  # 92% of available width
-            max_height = A4[1] * 0.45  # Max 45% of page height
+            max_width = page_width * 0.92
+            max_height = A4[1] * 0.45
 
-            # Scale image to fit
+            # Scale image to fit (72/96 DPI = 0.75 pixel-to-point conversion)
             aspect_ratio = img_height / img_width
             scaled_width = min(img_width * 0.75, max_width)
             scaled_height = scaled_width * aspect_ratio
@@ -1183,18 +1228,17 @@ class DocumentBuilder:
 
             # Create ReportLab Image
             rl_image = RLImage(
-                str(img_path), width=scaled_width, height=scaled_height
+                str(actual_path), width=scaled_width, height=scaled_height
             )
 
-            # Auto-number figure caption
+            # Auto-number figure caption with HTML-escaped alt text
             self.figure_counter += 1
             caption_text = f"Figure {self.figure_counter}"
             if alt:
-                caption_text += f": {alt}"
+                caption_text += f": {html_module.escape(alt)}"
 
             caption = Paragraph(caption_text, self.styles["FigureCaption"])
 
-            # Wrap in KeepTogether to prevent page break between image and caption
             figure_block = KeepTogether([
                 rl_image,
                 Spacer(1, 4),
@@ -2355,7 +2399,15 @@ class DocumentBuilder:
         return resolved_path
 
     def build_document(self, input_file: str, output_file: Optional[str] = None) -> str:
-        """Build a PDF document from input file."""
+        """Build a single document from input file."""
+        # Reset per-document state
+        self.heading_counter = 0
+        self.figure_counter = 0
+        self._pending_heading = None
+
+        input_path = Path(input_file)
+        self._source_dir = input_path.parent
+
         self.logger.info("=" * 60)
         self.logger.info(f"Building document: {input_file}")
 
@@ -2387,10 +2439,6 @@ class DocumentBuilder:
             output_path = self.output_dir / output_file
             self.logger.info(f"Output file: {output_path}")
 
-            # Reset heading counter and figure counter for new document
-            self.heading_counter = 0
-            self.figure_counter = 0
-            self._pending_heading = None
             self._source_dir = input_path.parent
 
             # Create TOC for markdown files
