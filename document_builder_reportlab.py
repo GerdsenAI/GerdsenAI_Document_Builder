@@ -51,7 +51,7 @@ from reportlab.lib.enums import (
     TA_JUSTIFY,
 )
 from reportlab.pdfgen import canvas
-from reportlab.lib.pdfbase.pdfmetrics import stringWidth
+from reportlab.pdfbase.pdfmetrics import stringWidth
 from PIL import Image
 from bs4 import BeautifulSoup, Tag
 import yaml
