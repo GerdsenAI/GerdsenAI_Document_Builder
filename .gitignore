@@ -169,6 +169,6 @@ GerdsenAI_Document_Builder_README.pdf
 
 # Project-specific private assets
 CLAUDE.md
-Assets/CSE-Icon.png
-Assets/OPC-UA-Server-COLOR-Logo+Wordmark-Stacked-v3.2-20260125.png
-Assets/OPC-UA-Server-COLOR-Logo+Wordmark-Stacked-v3.2-20260125.webp
+
+# Internal development specs and plans (contain local paths)
+docs/superpowers/
