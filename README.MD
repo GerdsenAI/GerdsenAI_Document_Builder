@@ -145,11 +145,33 @@ mermaid:
   fallback_to_code: true # show as code block if rendering fails
 ```
 
+### Image and Screenshot Embedding
+
+Embed images directly in your PDF using standard markdown syntax:
+
+```markdown
+![Architecture Diagram](diagrams/architecture.png)
+```
+
+Images are automatically:
+- **Auto-numbered** with figure captions (e.g., "Figure 1: Architecture Diagram")
+- **Scaled** to fit the page while preserving aspect ratio
+- **Kept together** with their captions (no page break between image and caption)
+
+**Supported formats:** PNG, JPEG, GIF, BMP, TIFF, WebP. SVG files must be converted to PNG first.
+
+**RGBA transparency:** PNG images with alpha channels are automatically composited onto a white background.
+
+**Path resolution:** Images are resolved from (in order): absolute path, relative to source markdown, `GERDSENAI_SOURCE_DIR` env var, current working directory.
+
 ### Intelligent Text Formatting
 - **Smart justification** — long paragraphs justified, short ones left-aligned
 - **Paragraphs with ≥2 inline code snippets** → left-aligned to prevent gaps
 - **Blockquote styling** with blue accent border
-- **Table formatting** with alternating row colors
+- **Horizontal rules** — `---` renders as a styled line separator
+- **Table formatting** with alternating row colors, accurate column widths via text measurement, and configurable header repetition on page breaks
+- **Nested lists** up to 5 levels deep with configurable bullet characters
+- **Smart page breaks** — headings are grouped with their first content paragraph to prevent orphaning; major headings (h1/h2) insert conditional page breaks
 - **Hyphenation support** for even text distribution
 
 ---

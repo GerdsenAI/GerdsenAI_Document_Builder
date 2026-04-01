@@ -4,6 +4,38 @@ All notable changes to the GerdsenAI Document Builder.
 
 ---
 
+## [3.0.0] — 2026-03-31
+
+### Added
+- **Image and screenshot embedding** — markdown `![alt](path)` syntax now embeds images in PDFs with auto-numbered figure captions (e.g., "Figure 1: Architecture diagram"), aspect-ratio-preserving scaling, and multi-path resolution (absolute, relative to source, GERDSENAI_SOURCE_DIR env var, cwd)
+- **Horizontal rule rendering** — `---` and `***` in markdown now render as styled horizontal lines in PDFs (previously silently dropped)
+- **FigureCaption style** — centered italic gray caption style for auto-numbered figures
+- **CondPageBreak for major headings** — h1/h2 headings insert a conditional page break to prevent orphaning at page bottoms
+- **Heading-content grouping** — headings are buffered and grouped with their first following paragraph using KeepTogether, preventing orphaned headings
+- **ListItem4 and ListItem5 styles** — nested lists now support 5 levels of depth (up from 3)
+- **Configurable table settings** — `config.yaml` now has a `tables:` section with `repeat_header`, `min_column_width`, `wide_table_column_threshold`, and `wide_table_font_size`
+- **Configurable bullet character** — `advanced.bullet_character` in config.yaml
+- **RGBA transparency handling** — PNG images with alpha channels are composited onto white background before embedding
+- **SVG/unsupported format detection** — clear error messages for unsupported image formats
+- **Image permission validation** — checks read access before attempting to open images
+- **xychart-beta diagram safety** — flowchart-specific sanitization rules are skipped for non-flowchart mermaid diagram types (xychart, pie, gantt, gitgraph, timeline, sankey)
+
+### Fixed
+- **Mermaid diagrams not rendering** — the Python `codehilite` markdown extension was stripping the `language-mermaid` class from fenced code blocks; added pre-processing to convert mermaid blocks to raw HTML before codehilite runs
+- **Table column widths** — replaced naive character-count estimation with `stringWidth()` from ReportLab for actual rendered text measurement; single-word headers now stay on one line
+- **HTML injection in image captions** — alt text is now escaped with `html.escape()` before passing to ReportLab Paragraph
+- **Mermaid temp file leaks** — PNG files are now tracked for cleanup immediately after rendering, not after insertion
+- **Mermaid error messages** — distinguish between mermaid-cli missing, Playwright missing, and Chromium binary missing
+- **Mermaid HTML entity encoding** — uses `html.escape()` instead of manual replacement for complete entity coverage
+- **page_break_avoid config enforcement** — the `advanced.page_break_avoid` config list is now actually read and enforced
+- **Paragraph alignment heuristic** — uses word count (< 20 words) instead of character count (< 150 chars) for short paragraph detection
+
+### Changed
+- **Heading processing consolidated** — six repetitive h1-h6 blocks replaced with a single dict-driven block
+- **DPI conversion documented** — the 0.75 pixel-to-point multiplier now has an explanatory comment (96 DPI screen to 72 DPI PDF)
+
+---
+
 ## [2.1.1] — 2026-02-27
 
 ### Fixed
