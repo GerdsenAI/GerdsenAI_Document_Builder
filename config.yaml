@@ -3,7 +3,7 @@
 
 # Default metadata for documents without front matter
 default:
-  author: "Garrett Gerdsen"
+  author: "Author"
   company: "GerdsenAI"
   version: "1.0.0"
   confidential: false
