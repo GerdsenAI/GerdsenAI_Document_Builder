@@ -3,7 +3,7 @@
 
 # Default metadata for documents without front matter
 default:
-  author: "Garrett Gerdsen"
+  author: "Author"
   company: "GerdsenAI"
   version: "1.0.0"
   confidential: false
@@ -38,6 +38,13 @@ footer:
   show_page_numbers: true
   show_logo: true
   show_date: false
+
+# Table settings
+tables:
+  repeat_header: true
+  min_column_width: 40  # points
+  wide_table_column_threshold: 6
+  wide_table_font_size: 7.5
 
 # Typography settings
 fonts:

@@ -5,11 +5,13 @@ Converts Markdown/Text to professional PDFs with custom
 styling, Table of Contents, and comprehensive logging.
 """
 
+import os
 import sys
 import argparse
 import re
 import tempfile
 import logging
+import html as html_module
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from datetime import datetime
@@ -39,6 +41,7 @@ from reportlab.platypus import (
     PageBreak,
     KeepTogether,
 )
+from reportlab.platypus.flowables import HRFlowable, CondPageBreak
 from reportlab.platypus.tableofcontents import (
     TableOfContents,
 )
@@ -48,6 +51,7 @@ from reportlab.lib.enums import (
     TA_JUSTIFY,
 )
 from reportlab.pdfgen import canvas
+from reportlab.pdfbase.pdfmetrics import stringWidth
 from PIL import Image
 from bs4 import BeautifulSoup, Tag
 import yaml
@@ -197,6 +201,7 @@ class DocumentBuilder:
         self.toc_entries = []
         self.current_toc = None
         self.heading_counter = 0
+        self._pending_heading = None
 
         self.logger.info("DocumentBuilder initialized successfully")
 
@@ -377,6 +382,30 @@ class DocumentBuilder:
                 leftIndent=54,
                 bulletIndent=42,
             ),
+            "ListItem4": ParagraphStyle(
+                "ListItem4",
+                parent=styles["BodyText"],
+                fontName="Helvetica",
+                fontSize=11,
+                textColor=colors.HexColor("#2c3e50"),
+                spaceBefore=2,
+                spaceAfter=2,
+                leading=14,
+                leftIndent=56,
+                bulletIndent=44,
+            ),
+            "ListItem5": ParagraphStyle(
+                "ListItem5",
+                parent=styles["BodyText"],
+                fontName="Helvetica",
+                fontSize=11,
+                textColor=colors.HexColor("#2c3e50"),
+                spaceBefore=2,
+                spaceAfter=2,
+                leading=14,
+                leftIndent=68,
+                bulletIndent=56,
+            ),
             "TableCell": ParagraphStyle(
                 "TableCell",
                 parent=styles["BodyText"],
@@ -553,6 +582,17 @@ class DocumentBuilder:
                 borderPadding=12,
                 backColor=colors.HexColor("#f8f9fa"),
             ),
+            "FigureCaption": ParagraphStyle(
+                "FigureCaption",
+                parent=styles["BodyText"],
+                fontName="Helvetica-Oblique",
+                fontSize=9,
+                textColor=colors.HexColor("#6b7280"),
+                alignment=TA_CENTER,
+                spaceBefore=4,
+                spaceAfter=12,
+                leading=12,
+            ),
             "TOCHeading": ParagraphStyle(
                 "TOCHeading",
                 parent=styles["Heading1"],
@@ -670,15 +710,34 @@ class DocumentBuilder:
         )
         return para
 
+    def _flush_pending_heading(self, story: List, next_elements: List = None) -> None:
+        """Flush any buffered heading, optionally grouping with following elements."""
+        if self._pending_heading is None:
+            return
+
+        heading_para = self._pending_heading
+        self._pending_heading = None
+
+        if next_elements:
+            story.append(KeepTogether([heading_para] + next_elements))
+        else:
+            story.append(heading_para)
+
+    def _should_keep_together(self, element_type: str) -> bool:
+        """Check if element type should be kept together per config."""
+        avoid_list = self.config.get("advanced", {}).get("page_break_avoid", [])
+        return element_type in avoid_list
+
     def _process_list_element(self, element, story, depth=0):
         """Recursively process ul/ol elements with proper nesting indentation."""
-        max_depth = 2  # 0, 1, 2 → ListItem1, ListItem2, ListItem3
+        max_depth = 4  # 0-4: ListItem1 through ListItem5
         style_key = f"ListItem{min(depth, max_depth) + 1}"
         style = self.styles[style_key]
 
         is_ordered = element.name == "ol"
         for idx, li in enumerate(element.find_all("li", recursive=False), 1):
-            bullet = f"{idx}. " if is_ordered else "\u2022 "
+            bullet_char = self.config.get("advanced", {}).get("bullet_character", "\u2022")
+            bullet = f"{idx}. " if is_ordered else f"{bullet_char} "
 
             # Get only the direct text of this <li>, not text from nested lists
             text_parts = []
@@ -713,6 +772,13 @@ class DocumentBuilder:
         mermaid_config = self.config.get("mermaid", {})
         max_label_length = mermaid_config.get("max_label_length", 80)
 
+        # Detect diagram type - skip flowchart-specific rules for non-flowchart types
+        first_line = mermaid_code.strip().split('\n')[0].strip().lower()
+        skip_flowchart_rules = any(
+            first_line.startswith(t) for t in
+            ('xychart', 'pie', 'gantt', 'gitgraph', 'timeline', 'sankey')
+        )
+
         # Edge Case 0: REMOVE ALL EMOJIS (they break Mermaid parsing!)
         # This is the FIRST thing we do - emojis cause parse errors
         emoji_pattern = re.compile(
@@ -735,194 +801,207 @@ class DocumentBuilder:
             fixes_applied.append(f"Removed {emoji_count} emojis (cause parse errors)")
             self.logger.debug(f"Stripped {emoji_count} emojis from Mermaid diagram")
 
-        # Edge Case 1: Multi-line text in node labels WITH quotes (splitLineToFitWidth error)
-        # This is the most common issue - replace ALL newlines inside quotes with <br/>
-        # This includes newlines after existing <br/> tags
-        def replace_multiline_labels_quoted(match):
-            label_content = match.group(1)
-            if "\n" in label_content:
-                # Replace all remaining newlines, even after <br/> tags
-                label_content = re.sub(r"\n+", "<br/>", label_content)
-                # Clean up any double <br/> tags
-                label_content = re.sub(r"(<br/>)+", "<br/>", label_content)
-                if "Replaced newlines in labels with <br/> tags" not in fixes_applied:
-                    fixes_applied.append("Replaced newlines in labels with <br/> tags")
-            return f'["{label_content}"]'
+        if not skip_flowchart_rules:
+            # Edge Case 1: Multi-line text in node labels WITH quotes (splitLineToFitWidth error)
+            # This is the most common issue - replace ALL newlines inside quotes with <br/>
+            # This includes newlines after existing <br/> tags
+            def replace_multiline_labels_quoted(match):
+                label_content = match.group(1)
+                if "\n" in label_content:
+                    # Replace all remaining newlines, even after <br/> tags
+                    label_content = re.sub(r"\n+", "<br/>", label_content)
+                    # Clean up any double <br/> tags
+                    label_content = re.sub(r"(<br/>)+", "<br/>", label_content)
+                    if "Replaced newlines in labels with <br/> tags" not in fixes_applied:
+                        fixes_applied.append("Replaced newlines in labels with <br/> tags")
+                return f'["{label_content}"]'
 
-        mermaid_code = re.sub(
-            r'\["([^"]*?)"\]',
-            replace_multiline_labels_quoted,
-            mermaid_code,
-            flags=re.DOTALL,
-        )
-
-        # Edge Case 2: Multi-line text in node labels WITHOUT quotes
-        # Format: A[Text with\nnewlines]
-        def replace_multiline_labels_unquoted(match):
-            prefix = match.group(1)
-            label_content = match.group(2)
-            if "\n" in label_content:
-                # Replace all newlines
-                label_content = re.sub(r"\n+", "<br/>", label_content)
-                # Clean up any double <br/> tags
-                label_content = re.sub(r"(<br/>)+", "<br/>", label_content)
-                if "Replaced newlines in labels with <br/> tags" not in fixes_applied:
-                    fixes_applied.append("Replaced newlines in labels with <br/> tags")
-            return f'{prefix}["{label_content}"]'
-
-        # Match node definitions like: A[Text] but not A["Text"]
-        mermaid_code = re.sub(
-            r'(\b[A-Za-z0-9_]+)\[(?!")([^\]]*?)\]',
-            replace_multiline_labels_unquoted,
-            mermaid_code,
-            flags=re.DOTALL,
-        )
-
-        # Edge Case 3: Multi-line text in parentheses labels
-        def replace_multiline_parens(match):
-            label_content = match.group(1)
-            if "\n" in label_content:
-                # Replace all newlines
-                label_content = re.sub(r"\n+", "<br/>", label_content)
-                # Clean up any double <br/> tags
-                label_content = re.sub(r"(<br/>)+", "<br/>", label_content)
-                if "Replaced newlines in labels with <br/> tags" not in fixes_applied:
-                    fixes_applied.append("Replaced newlines in labels with <br/> tags")
-            return f'("{label_content}")'
-
-        mermaid_code = re.sub(
-            r'\("([^"]*?)"\)', replace_multiline_parens, mermaid_code, flags=re.DOTALL
-        )
-
-        # Edge Case 4: Edge/Arrow labels (CRITICAL - MOST COMMON ERROR!)
-        # The TabX diagrams have INVALID double-arrow syntax like:
-        # WRONG:  -->|-->"label"|-->
-        # WRONG:  -->|-->label|-->
-        # RIGHT:  -->|"label"|
-
-        arrow_token = r"(?:--?>|===?>|\.\.\.>|-\.-?>|-\.->|---)"
-
-        def strip_internal_arrow(match: re.Match) -> str:
-            """Remove stray arrows inside edge labels and ensure quoting."""
-            label = match.group("label").strip()
-            if not (label.startswith('"') and label.endswith('"')):
-                label = f'"{label}"'
-            if "Fixed triple-arrow edge labels (invalid syntax)" not in fixes_applied:
-                fixes_applied.append("Fixed triple-arrow edge labels (invalid syntax)")
-            return f"|{label}|"
-
-        # Remove arrows that appear between the pipes of an edge label
-        mermaid_code = re.sub(
-            rf"\|\s*{arrow_token}\s*(?P<label>\"[^\"]*\"|[^|\"]+?)\|",
-            strip_internal_arrow,
-            mermaid_code,
-            flags=re.DOTALL,
-        )
-
-        def strip_trailing_arrow(match: re.Match) -> str:
-            """Remove stray arrows appearing immediately after a labelled edge."""
-            spacing = match.group("spacing") or " "
-            if "Fixed triple-arrow edge labels (invalid syntax)" not in fixes_applied:
-                fixes_applied.append("Fixed triple-arrow edge labels (invalid syntax)")
-            return f"|{spacing}"
-
-        # Remove arrows that appear immediately after a labelled edge (e.g. |--> Node)
-        mermaid_code = re.sub(
-            rf"\|\s*{arrow_token}(?P<spacing>\s*)",
-            strip_trailing_arrow,
-            mermaid_code,
-        )
-
-        def fix_all_edge_label_issues(match):
-            """Clean up edge labels: remove arrows, ensure quotes."""
-            arrow_before = match.group(1)  # Arrow before first pipe
-            content = match.group(2)  # Everything between pipes
-
-            # Remove ALL arrows from content (leading/trailing, with/without spaces)
-            cleaned = content
-            cleaned = re.sub(
-                r"^(?:--?>|===?>|\.\.\.>|-\.-?>|-\.->|---)\s*", "", cleaned
+            mermaid_code = re.sub(
+                r'\["([^"]*?)"\]',
+                replace_multiline_labels_quoted,
+                mermaid_code,
+                flags=re.DOTALL,
             )
-            cleaned = re.sub(
-                r"\s*(?:--?>|===?>|\.\.\.>|-\.-?>|-\.->|---)$", "", cleaned
+
+            # Edge Case 2: Multi-line text in node labels WITHOUT quotes
+            # Format: A[Text with\nnewlines]
+            def replace_multiline_labels_unquoted(match):
+                prefix = match.group(1)
+                label_content = match.group(2)
+                if "\n" in label_content:
+                    # Replace all newlines
+                    label_content = re.sub(r"\n+", "<br/>", label_content)
+                    # Clean up any double <br/> tags
+                    label_content = re.sub(r"(<br/>)+", "<br/>", label_content)
+                    if "Replaced newlines in labels with <br/> tags" not in fixes_applied:
+                        fixes_applied.append("Replaced newlines in labels with <br/> tags")
+                return f'{prefix}["{label_content}"]'
+
+            # Match node definitions like: A[Text] but not A["Text"]
+            mermaid_code = re.sub(
+                r'(\b[A-Za-z0-9_]+)\[(?!")([^\]]*?)\]',
+                replace_multiline_labels_unquoted,
+                mermaid_code,
+                flags=re.DOTALL,
             )
-            cleaned = cleaned.strip()
 
-            # Ensure content is quoted
-            if not (cleaned.startswith('"') and cleaned.endswith('"')):
-                cleaned = f'"{cleaned}"'
+            # Edge Case 3: Multi-line text in parentheses labels
+            def replace_multiline_parens(match):
+                label_content = match.group(1)
+                if "\n" in label_content:
+                    # Replace all newlines
+                    label_content = re.sub(r"\n+", "<br/>", label_content)
+                    # Clean up any double <br/> tags
+                    label_content = re.sub(r"(<br/>)+", "<br/>", label_content)
+                    if "Replaced newlines in labels with <br/> tags" not in fixes_applied:
+                        fixes_applied.append("Replaced newlines in labels with <br/> tags")
+                return f'("{label_content}")'
 
-            result = f"{arrow_before}|{cleaned}|"
+            mermaid_code = re.sub(
+                r'\("([^"]*?)"\)', replace_multiline_parens, mermaid_code, flags=re.DOTALL
+            )
 
-            if content != cleaned:  # Only log if we made changes
-                if (
-                    "Fixed double-arrow edge labels (invalid syntax)"
-                    not in fixes_applied
-                ):
-                    fixes_applied.append(
+            # Edge Case 4: Edge/Arrow labels (CRITICAL - MOST COMMON ERROR!)
+            # The TabX diagrams have INVALID double-arrow syntax like:
+            # WRONG:  -->|-->"label"|-->
+            # WRONG:  -->|-->label|-->
+            # RIGHT:  -->|"label"|
+
+            arrow_token = r"(?:--?>|===?>|\.\.\.>|-\.-?>|-\.->|---)"
+
+            def strip_internal_arrow(match: re.Match) -> str:
+                """Remove stray arrows inside edge labels and ensure quoting."""
+                label = match.group("label").strip()
+                if not (label.startswith('"') and label.endswith('"')):
+                    label = f'"{label}"'
+                if "Fixed triple-arrow edge labels (invalid syntax)" not in fixes_applied:
+                    fixes_applied.append("Fixed triple-arrow edge labels (invalid syntax)")
+                return f"|{label}|"
+
+            # Remove arrows that appear between the pipes of an edge label
+            mermaid_code = re.sub(
+                rf"\|\s*{arrow_token}\s*(?P<label>\"[^\"]*\"|[^|\"]+?)\|",
+                strip_internal_arrow,
+                mermaid_code,
+                flags=re.DOTALL,
+            )
+
+            def strip_trailing_arrow(match: re.Match) -> str:
+                """Remove stray arrows appearing immediately after a labelled edge."""
+                spacing = match.group("spacing") or " "
+                if "Fixed triple-arrow edge labels (invalid syntax)" not in fixes_applied:
+                    fixes_applied.append("Fixed triple-arrow edge labels (invalid syntax)")
+                return f"|{spacing}"
+
+            # Remove arrows that appear immediately after a labelled edge (e.g. |--> Node)
+            mermaid_code = re.sub(
+                rf"\|\s*{arrow_token}(?P<spacing>\s*)",
+                strip_trailing_arrow,
+                mermaid_code,
+            )
+
+            def fix_all_edge_label_issues(match):
+                """Clean up edge labels: remove arrows, ensure quotes."""
+                arrow_before = match.group(1)  # Arrow before first pipe
+                content = match.group(2)  # Everything between pipes
+
+                # Remove ALL arrows from content (leading/trailing, with/without spaces)
+                cleaned = content
+                cleaned = re.sub(
+                    r"^(?:--?>|===?>|\.\.\.>|-\.-?>|-\.->|---)\s*", "", cleaned
+                )
+                cleaned = re.sub(
+                    r"\s*(?:--?>|===?>|\.\.\.>|-\.-?>|-\.->|---)$", "", cleaned
+                )
+                cleaned = cleaned.strip()
+
+                # Ensure content is quoted
+                if not (cleaned.startswith('"') and cleaned.endswith('"')):
+                    cleaned = f'"{cleaned}"'
+
+                result = f"{arrow_before}|{cleaned}|"
+
+                if content != cleaned:  # Only log if we made changes
+                    if (
                         "Fixed double-arrow edge labels (invalid syntax)"
-                    )
+                        not in fixes_applied
+                    ):
+                        fixes_applied.append(
+                            "Fixed double-arrow edge labels (invalid syntax)"
+                        )
 
-            return result
+                return result
 
-        # Match: arrow + pipe + ANY content + pipe
-        # The [^|\n]+? will match anything except pipes or newlines
-        before_edge_fix = mermaid_code
-        mermaid_code = re.sub(
-            r"((?:--?>|===?>|\.\.\.>|-\.-?>|-\.->|---))\|([^|\n]+?)\|",
-            fix_all_edge_label_issues,
-            mermaid_code,
-        )
-        if (
-            before_edge_fix != mermaid_code
-            and "Fixed double-arrow edge labels (invalid syntax)" not in fixes_applied
-        ):
-            fixes_applied.append("Fixed double-arrow edge labels (invalid syntax)")
+            # Match: arrow + pipe + ANY content + pipe
+            # The [^|\n]+? will match anything except pipes or newlines
+            before_edge_fix = mermaid_code
+            mermaid_code = re.sub(
+                r"((?:--?>|===?>|\.\.\.>|-\.-?>|-\.->|---))\|([^|\n]+?)\|",
+                fix_all_edge_label_issues,
+                mermaid_code,
+            )
+            if (
+                before_edge_fix != mermaid_code
+                and "Fixed double-arrow edge labels (invalid syntax)" not in fixes_applied
+            ):
+                fixes_applied.append("Fixed double-arrow edge labels (invalid syntax)")
 
-        def replace_multiline_edge_labels(match):
-            arrow_type = match.group(1)
-            label_content = match.group(2)
-            if "\n" in label_content:
-                # Replace all newlines
-                label_content = re.sub(r"\n+", "<br/>", label_content)
-                # Clean up any double <br/> tags
-                label_content = re.sub(r"(<br/>)+", "<br/>", label_content)
-                if (
-                    "Replaced newlines in edge labels with <br/> tags"
-                    not in fixes_applied
-                ):
-                    fixes_applied.append(
+            def replace_multiline_edge_labels(match):
+                arrow_type = match.group(1)
+                label_content = match.group(2)
+                if "\n" in label_content:
+                    # Replace all newlines
+                    label_content = re.sub(r"\n+", "<br/>", label_content)
+                    # Clean up any double <br/> tags
+                    label_content = re.sub(r"(<br/>)+", "<br/>", label_content)
+                    if (
                         "Replaced newlines in edge labels with <br/> tags"
-                    )
-            return f'{arrow_type}|"{label_content}"|'
+                        not in fixes_applied
+                    ):
+                        fixes_applied.append(
+                            "Replaced newlines in edge labels with <br/> tags"
+                        )
+                return f'{arrow_type}|"{label_content}"|'
 
-        # Match various arrow types with quoted labels
-        # Covers: -->|, ---|, ==>|, -.->|, -.-|, etc.
-        mermaid_code = re.sub(
-            r'((?:--?>|===?>|\.\.\.>|-\.-?>|-\.->|---))\|"([^"]*?)"\|',
-            replace_multiline_edge_labels,
-            mermaid_code,
-            flags=re.DOTALL,
-        )
+            # Match various arrow types with quoted labels
+            # Covers: -->|, ---|, ==>|, -.->|, -.-|, etc.
+            mermaid_code = re.sub(
+                r'((?:--?>|===?>|\.\.\.>|-\.-?>|-\.->|---))\|"([^"]*?)"\|',
+                replace_multiline_edge_labels,
+                mermaid_code,
+                flags=re.DOTALL,
+            )
 
-        # Edge Case 5: Subgraph titles
-        def replace_multiline_subgraph(match):
-            keyword = match.group(1)
-            title_content = match.group(2)
-            if "\n" in title_content:
-                title_content = re.sub(
-                    r"\n+", " ", title_content
-                )  # Subgraph titles should be single line
-                if "Replaced newlines in subgraph titles" not in fixes_applied:
-                    fixes_applied.append("Replaced newlines in subgraph titles")
-            return f'{keyword} "{title_content}"'
+            # Edge Case 5: Subgraph titles
+            def replace_multiline_subgraph(match):
+                keyword = match.group(1)
+                title_content = match.group(2)
+                if "\n" in title_content:
+                    title_content = re.sub(
+                        r"\n+", " ", title_content
+                    )  # Subgraph titles should be single line
+                    if "Replaced newlines in subgraph titles" not in fixes_applied:
+                        fixes_applied.append("Replaced newlines in subgraph titles")
+                return f'{keyword} "{title_content}"'
 
-        mermaid_code = re.sub(
-            r'\b(subgraph)\s+"([^"]*?)"',
-            replace_multiline_subgraph,
-            mermaid_code,
-            flags=re.DOTALL,
-        )
+            mermaid_code = re.sub(
+                r'\b(subgraph)\s+"([^"]*?)"',
+                replace_multiline_subgraph,
+                mermaid_code,
+                flags=re.DOTALL,
+            )
+
+            # Edge Case 8: Invalid arrow syntax
+            # NOTE: Do NOT add --> after | in edge labels (-->|"label"| is correct, NOT -->|"label"|-->)
+            arrow_fixes = {
+                r"-->\s*\|": ("-->|", "Fixed arrow syntax (space before pipe)"),
+                # REMOVED: r"\|(?![-=])": ("|-->", "Fixed incomplete arrow"),  # This breaks edge labels!
+            }
+
+            for pattern, (replacement, description) in arrow_fixes.items():
+                if re.search(pattern, mermaid_code):
+                    mermaid_code = re.sub(pattern, replacement, mermaid_code)
+                    fixes_applied.append(description)
 
         # Edge Case 6: Very long labels (auto-wrap at word boundaries)
         def handle_long_labels(match):
@@ -968,18 +1047,6 @@ class DocumentBuilder:
             fixes_applied.append("Cleaned excessive whitespace")
 
         mermaid_code = "\n".join(cleaned_lines)
-
-        # Edge Case 8: Invalid arrow syntax
-        # NOTE: Do NOT add --> after | in edge labels (-->|"label"| is correct, NOT -->|"label"|-->)
-        arrow_fixes = {
-            r"-->\s*\|": ("-->|", "Fixed arrow syntax (space before pipe)"),
-            # REMOVED: r"\|(?![-=])": ("|-->", "Fixed incomplete arrow"),  # This breaks edge labels!
-        }
-
-        for pattern, (replacement, description) in arrow_fixes.items():
-            if re.search(pattern, mermaid_code):
-                mermaid_code = re.sub(pattern, replacement, mermaid_code)
-                fixes_applied.append(description)
 
         # Log fixes if any were applied
         if fixes_applied:
@@ -1056,6 +1123,146 @@ class DocumentBuilder:
             simplified.append(line)
 
         return "\n".join(simplified)
+
+    def _process_image_element(self, img_tag, parent_element) -> List:
+        """Process a markdown image into ReportLab flowables with figure caption."""
+        src = img_tag.get("src", "")
+        alt = img_tag.get("alt", "")
+
+        if not src:
+            self.logger.warning("Image tag with no src attribute, skipping")
+            return []
+
+        # Reject remote URLs
+        if src.startswith(("http://", "https://")):
+            self.logger.warning(
+                f"Remote image URLs not supported: {src}. Download the image locally first."
+            )
+            return []
+
+        # Resolve image path - try multiple locations
+        img_path = None
+        src_path = Path(src)
+
+        # Try as absolute path first
+        if src_path.is_absolute() and src_path.exists():
+            img_path = src_path
+
+        # Try relative to original source directory
+        if img_path is None:
+            source_dir = getattr(self, "_source_dir", None)
+            if source_dir:
+                candidate = source_dir / src
+                if candidate.exists():
+                    img_path = candidate
+
+        # Try relative to GERDSENAI_SOURCE_DIR env var
+        if img_path is None:
+            env_source = os.environ.get("GERDSENAI_SOURCE_DIR")
+            if env_source:
+                candidate = Path(env_source) / src
+                if candidate.exists():
+                    img_path = candidate
+
+        # Try relative to current working directory
+        if img_path is None:
+            candidate = Path.cwd() / src
+            if candidate.exists():
+                img_path = candidate
+
+        if img_path is None:
+            self.logger.warning(
+                f"Image not found: {src} "
+                f"(searched: {getattr(self, '_source_dir', 'N/A')}, "
+                f"env={os.environ.get('GERDSENAI_SOURCE_DIR', 'N/A')}, cwd={Path.cwd()})"
+            )
+            return []
+
+        # Check file format
+        supported_formats = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".tif", ".webp"}
+        unsupported_formats = {".svg", ".pdf", ".eps"}
+
+        if img_path.suffix.lower() in unsupported_formats:
+            self.logger.warning(
+                f"Unsupported image format: {img_path.suffix} ({img_path.name}). "
+                f"Convert to PNG first."
+            )
+            return []
+
+        if img_path.suffix.lower() not in supported_formats:
+            self.logger.warning(
+                f"Unknown image format: {img_path.suffix} ({img_path.name}). "
+                f"Supported: {', '.join(sorted(supported_formats))}"
+            )
+            return []
+
+        # Check read permission
+        if not os.access(str(img_path), os.R_OK):
+            self.logger.warning(f"Image not readable (permission denied): {img_path}")
+            return []
+
+        try:
+            with Image.open(str(img_path)) as pil_img:
+                # Handle RGBA transparency - composite onto white background
+                actual_path = img_path
+                if pil_img.mode == "RGBA":
+                    background = Image.new("RGB", pil_img.size, (255, 255, 255))
+                    background.paste(pil_img, mask=pil_img.split()[3])
+                    temp_rgb = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+                    background.save(temp_rgb.name)
+                    temp_rgb.close()
+                    actual_path = Path(temp_rgb.name)
+                    self.temp_files.append(str(actual_path))
+
+                img_width, img_height = pil_img.size
+
+            # Calculate available page width
+            page_width = A4[0] - (
+                self.config["margins"]["left"] * mm
+                + self.config["margins"]["right"] * mm
+            )
+            max_width = page_width * 0.92
+            max_height = A4[1] * 0.45
+
+            # Scale image to fit (72/96 DPI = 0.75 pixel-to-point conversion)
+            aspect_ratio = img_height / img_width
+            scaled_width = min(img_width * 0.75, max_width)
+            scaled_height = scaled_width * aspect_ratio
+
+            # Constrain height
+            if scaled_height > max_height:
+                scaled_height = max_height
+                scaled_width = scaled_height / aspect_ratio
+
+            # Create ReportLab Image
+            rl_image = RLImage(
+                str(actual_path), width=scaled_width, height=scaled_height
+            )
+
+            # Auto-number figure caption with HTML-escaped alt text
+            self.figure_counter += 1
+            caption_text = f"Figure {self.figure_counter}"
+            if alt:
+                caption_text += f": {html_module.escape(alt)}"
+
+            caption = Paragraph(caption_text, self.styles["FigureCaption"])
+
+            figure_block = KeepTogether([
+                rl_image,
+                Spacer(1, 4),
+                caption,
+                Spacer(1, 8),
+            ])
+
+            self.logger.info(
+                f"Embedded image: {img_path.name} as Figure {self.figure_counter} "
+                f"({scaled_width:.0f}x{scaled_height:.0f})"
+            )
+            return [figure_block]
+
+        except Exception as e:
+            self.logger.error(f"Failed to process image {src}: {e}")
+            return []
 
     def _render_mermaid_diagram(self, mermaid_code: str) -> Optional[str]:
         """
@@ -1139,15 +1346,32 @@ class DocumentBuilder:
                     "Mermaid rendering failed - output file not created"
                 )
 
+            # Track PNG for cleanup immediately
+            self.temp_files.append(str(png_path))
+
             self.logger.info("Successfully rendered Mermaid diagram")
             return png_path
 
         except ImportError as e:
+            err_str = str(e).lower()
+            if "mermaid" in err_str:
+                self.logger.error(
+                    "mermaid-cli not installed. Run: pip install mermaid-cli"
+                )
+            elif "playwright" in err_str:
+                self.logger.error(
+                    "playwright not installed. Run: pip install playwright && playwright install chromium"
+                )
+            else:
+                self.logger.error(f"Missing dependency for Mermaid rendering: {e}")
+
+            if mermaid_config.get("fallback_to_code", True):
+                return None
+            raise
+        except FileNotFoundError as e:
             self.logger.error(
-                "mermaid-cli not installed. Run: "
-                "pip install mermaid-cli && playwright install chromium"
+                f"Chromium browser not found. Run: playwright install chromium. Detail: {e}"
             )
-            self.logger.error(f"Error: {e}")
             if mermaid_config.get("fallback_to_code", True):
                 return None
             raise
@@ -1273,6 +1497,9 @@ class DocumentBuilder:
                             if not auto_accept:
                                 print(" done", flush=True)
                             print("   [OK] Simplified diagram rendered successfully\n")
+
+                            # Track PNG for cleanup immediately
+                            self.temp_files.append(str(simplified_png_path))
 
                             # DON'T delete the PNG - it's needed by ReportLab!
                             # Only clean up the .mmd file
@@ -1457,6 +1684,22 @@ class DocumentBuilder:
         """Process markdown content and convert to ReportLab story elements."""
         self.logger.info("Processing markdown content to story elements")
 
+        # Pre-process: convert Mermaid fenced blocks to raw HTML before
+        # codehilite strips the language-mermaid class (GitHub issue workaround)
+        mermaid_block_pattern = re.compile(
+            r'```mermaid\s*\n(.*?)```', re.DOTALL
+        )
+        mermaid_count = len(mermaid_block_pattern.findall(content))
+        if mermaid_count:
+            def _mermaid_to_html(m):
+                code = html_module.escape(m.group(1).strip())
+                return f'\n<pre><code class="language-mermaid">{code}</code></pre>\n'
+            content = mermaid_block_pattern.sub(_mermaid_to_html, content)
+            self.logger.info(
+                f"Pre-processed {mermaid_count} Mermaid diagram(s) to preserve "
+                f"language-mermaid class from codehilite interference"
+            )
+
         # Convert markdown to HTML
         md = markdown.Markdown(
             extensions=[
@@ -1529,51 +1772,45 @@ class DocumentBuilder:
                     continue
 
                 # Process headings with TOC support
-                if element.name == "h1":
-                    text = element.get_text()
-                    para = self._create_heading_with_bookmark(
-                        text, self.styles["CustomHeading1"], 0
-                    )
-                    story.append(para)
+                if element.name in ("h1", "h2", "h3", "h4", "h5", "h6"):
+                    # Flush any previous pending heading first
+                    self._flush_pending_heading(story)
 
-                elif element.name == "h2":
                     text = element.get_text()
+                    level_map = {
+                        "h1": ("CustomHeading1", 0),
+                        "h2": ("CustomHeading2", 1),
+                        "h3": ("CustomHeading3", 2),
+                        "h4": ("CustomHeading4", 3),
+                        "h5": ("CustomHeading5", 4),
+                        "h6": ("CustomHeading5", 5),
+                    }
+                    style_name, toc_level = level_map[element.name]
                     para = self._create_heading_with_bookmark(
-                        text, self.styles["CustomHeading2"], 1
+                        text, self.styles[style_name], toc_level
                     )
-                    story.append(para)
 
-                elif element.name == "h3":
-                    text = element.get_text()
-                    para = self._create_heading_with_bookmark(
-                        text, self.styles["CustomHeading3"], 2
-                    )
-                    story.append(para)
+                    # Add CondPageBreak before major headings to prevent orphaning
+                    if element.name in ("h1", "h2"):
+                        story.append(CondPageBreak(2 * inch))
 
-                elif element.name == "h4":
-                    text = element.get_text()
-                    para = self._create_heading_with_bookmark(
-                        text, self.styles["CustomHeading4"], 3
-                    )
-                    story.append(para)
-
-                elif element.name == "h5":
-                    text = element.get_text()
-                    para = self._create_heading_with_bookmark(
-                        text, self.styles["CustomHeading5"], 4
-                    )
-                    story.append(para)
-
-                elif element.name == "h6":
-                    text = element.get_text()
-                    para = self._create_heading_with_bookmark(
-                        text, self.styles["CustomHeading5"], 5
-                    )
-                    story.append(para)
+                    # Buffer heading to group with next content element
+                    if self._should_keep_together("headings"):
+                        self._pending_heading = para
+                    else:
+                        story.append(para)
 
                 elif element.name == "p":
-                    # Skip paragraphs containing images
-                    if element.find("img"):
+                    # Handle paragraphs containing images
+                    img_tag = element.find("img")
+                    if img_tag:
+                        img_elements = self._process_image_element(
+                            img_tag, element
+                        )
+                        if img_elements:
+                            self._flush_pending_heading(story, img_elements)
+                        else:
+                            self._flush_pending_heading(story)
                         continue
 
                     # Get paragraph text and clean HTML attributes
@@ -1614,26 +1851,34 @@ class DocumentBuilder:
                                 parent=self.styles["CustomBody"],
                                 alignment=TA_LEFT,
                             )
-                            story.append(Paragraph(combined_text, left_style))
+                            para_flowable = Paragraph(combined_text, left_style)
                         else:
-                            story.append(
-                                Paragraph(combined_text, self.styles["CustomBody"])
+                            para_flowable = Paragraph(
+                                combined_text, self.styles["CustomBody"]
                             )
                     else:
-                        # Check paragraph length for justification
-                        if len(para_text) < 150:
+                        # Check word count for justification heuristic
+                        word_count = len(element.get_text().split())
+                        if word_count < 20:
                             left_style = ParagraphStyle(
                                 "TempLeft",
                                 parent=self.styles["CustomBody"],
                                 alignment=TA_LEFT,
                             )
-                            story.append(Paragraph(para_text, left_style))
+                            para_flowable = Paragraph(para_text, left_style)
                         else:
-                            story.append(
-                                Paragraph(para_text, self.styles["CustomBody"])
+                            para_flowable = Paragraph(
+                                para_text, self.styles["CustomBody"]
                             )
 
+                    # Flush pending heading grouped with this paragraph
+                    if self._pending_heading is not None:
+                        self._flush_pending_heading(story, [para_flowable])
+                    else:
+                        story.append(para_flowable)
+
                 elif element.name == "pre":
+                    self._flush_pending_heading(story)
                     # Code block processing - check for Mermaid diagrams first
                     code_elem = element.find("code")
 
@@ -1700,7 +1945,8 @@ class DocumentBuilder:
                                         scaled_width = max_width
                                         scaled_height = max_width * aspect_ratio
                                     else:
-                                        # Convert pixels to points (assuming 72 DPI)
+                                        # Pixel-to-point conversion: 96 DPI screen -> 72 DPI PDF
+                                        # Ratio: 72/96 = 0.75
                                         scaled_width = img_width * 0.75
                                         scaled_height = img_height * 0.75
 
@@ -1730,12 +1976,6 @@ class DocumentBuilder:
 
                                     self.logger.info(
                                         f"Added Mermaid diagram: {scaled_width:.0f}x{scaled_height:.0f} points"
-                                    )
-
-                                    # Track temp file for cleanup after PDF is built
-                                    self.temp_files.append(img_path)
-                                    self.logger.debug(
-                                        f"Tracking temp image for later cleanup: {img_path}"
                                     )
 
                                     # Skip regular code block processing
@@ -1778,6 +2018,7 @@ class DocumentBuilder:
                 elif element.name == "div" and "highlight" in (
                     element.get("class") or []
                 ):
+                    self._flush_pending_heading(story)
                     # Handle highlighted code blocks
                     code_elem = element.find("pre")
                     inner_code = None
@@ -1800,17 +2041,32 @@ class DocumentBuilder:
                             ]))
 
                 elif element.name == "blockquote":
+                    self._flush_pending_heading(story)
                     quote_text = element.get_text()
                     story.append(KeepTogether([
                         Paragraph(quote_text, self.styles["CustomQuote"]),
                         Spacer(1, 0.1 * inch),
                     ]))
 
+                elif element.name == "hr":
+                    self._flush_pending_heading(story)
+                    story.append(HRFlowable(
+                        width="100%",
+                        thickness=1,
+                        color=colors.HexColor(
+                            self.config.get("colors", {}).get("table_border", "#e1e4e8")
+                        ),
+                        spaceBefore=12,
+                        spaceAfter=12,
+                    ))
+
                 elif element.name == "ul" or element.name == "ol":
+                    self._flush_pending_heading(story)
                     self._process_list_element(element, story, depth=0)
                     story.append(Spacer(1, 0.1 * inch))
 
                 elif element.name == "table":
+                    self._flush_pending_heading(story)
                     # Process tables with width-fitting and text wrapping
                     raw_rows = []
                     for row in element.find_all("tr"):
@@ -1855,44 +2111,44 @@ class DocumentBuilder:
                             cell_style = self.styles["TableCell"]
                             header_style = self.styles["TableCellHeader"]
 
-                        # Measure natural column widths (approximate)
-                        char_width = cell_style.fontSize * 0.5
-                        natural_widths = [0.0] * num_cols
-                        for r in raw_rows:
-                            for ci, val in enumerate(r):
-                                w = len(val) * char_width + 12  # 12pt padding
-                                if w > natural_widths[ci]:
-                                    natural_widths[ci] = w
+                        # Calculate column widths using actual text measurement
+                        table_cfg = self.config.get("tables", {})
+                        min_col_width = table_cfg.get("min_column_width", 40)
+                        wide_threshold = table_cfg.get("wide_table_column_threshold", 6)
+                        wide_font_size = table_cfg.get("wide_table_font_size", 7.5)
 
-                        total_natural = sum(natural_widths)
-                        min_col_width = 40  # points
-
-                        if total_natural <= available_width:
-                            col_widths = natural_widths
+                        num_cols = len(raw_rows[0]) if raw_rows else 0
+                        if num_cols > wide_threshold:
+                            cell_font_size = wide_font_size
+                            cell_font_name = "Helvetica"
                         else:
-                            # Scale proportionally, respecting minimum
-                            col_widths = [
-                                max(min_col_width, w * available_width / total_natural)
-                                for w in natural_widths
-                            ]
-                            # If minimums pushed total over budget, re-scale the non-minimum cols
-                            total_after = sum(col_widths)
-                            if total_after > available_width:
-                                excess = total_after - available_width
-                                scalable = [
-                                    i
-                                    for i, w in enumerate(col_widths)
-                                    if w > min_col_width
-                                ]
-                                scalable_total = sum(col_widths[i] for i in scalable)
-                                if scalable_total > 0:
-                                    for i in scalable:
-                                        col_widths[i] -= excess * (
-                                            col_widths[i] / scalable_total
-                                        )
-                                        col_widths[i] = max(
-                                            min_col_width, col_widths[i]
-                                        )
+                            cell_font_size = self.styles["CustomBody"].fontSize
+                            cell_font_name = self.styles["CustomBody"].fontName
+
+                        # Measure natural width of each column using actual text rendering
+                        natural_widths = [0] * num_cols
+                        for row in raw_rows:
+                            for i, val in enumerate(row):
+                                if i < num_cols:
+                                    measured = stringWidth(str(val), cell_font_name, cell_font_size) + 12
+                                    natural_widths[i] = max(natural_widths[i], measured)
+
+                        # Calculate available width
+                        page_width = A4[0] - (
+                            self.config["margins"]["left"] + self.config["margins"]["right"]
+                        ) * mm
+                        total_natural = sum(natural_widths)
+
+                        if total_natural <= page_width:
+                            col_widths = [max(w, min_col_width) for w in natural_widths]
+                        else:
+                            scale = page_width / total_natural
+                            col_widths = [max(w * scale, min_col_width) for w in natural_widths]
+
+                        # Final normalization to exactly fit page width
+                        total = sum(col_widths)
+                        if total > 0:
+                            col_widths = [w * (page_width / total) for w in col_widths]
 
                         # Wrap cell text in Paragraph objects for word-wrapping
                         table_data = []
@@ -1919,7 +2175,8 @@ class DocumentBuilder:
                             color_cfg.get("table_border", "#e1e4e8")
                         )
 
-                        t = Table(table_data, colWidths=col_widths, repeatRows=1)
+                        repeat = 1 if self.config.get("tables", {}).get("repeat_header", True) else 0
+                        t = Table(table_data, colWidths=col_widths, repeatRows=repeat)
                         t.setStyle(
                             TableStyle(
                                 [
@@ -1937,6 +2194,9 @@ class DocumentBuilder:
                             )
                         )
                         story.append(KeepTogether([t, Spacer(1, 0.2 * inch)]))
+
+        # Flush any remaining buffered heading
+        self._flush_pending_heading(story)
 
         self.logger.info(f"Generated {len(story)} story elements")
         return story
@@ -2162,7 +2422,15 @@ class DocumentBuilder:
         return resolved_path
 
     def build_document(self, input_file: str, output_file: Optional[str] = None) -> str:
-        """Build a PDF document from input file."""
+        """Build a single document from input file."""
+        # Reset per-document state
+        self.heading_counter = 0
+        self.figure_counter = 0
+        self._pending_heading = None
+
+        input_path = Path(input_file)
+        self._source_dir = input_path.parent
+
         self.logger.info("=" * 60)
         self.logger.info(f"Building document: {input_file}")
 
@@ -2194,8 +2462,7 @@ class DocumentBuilder:
             output_path = self.output_dir / output_file
             self.logger.info(f"Output file: {output_path}")
 
-            # Reset heading counter for new document
-            self.heading_counter = 0
+            self._source_dir = input_path.parent
 
             # Create TOC for markdown files
             toc = None
