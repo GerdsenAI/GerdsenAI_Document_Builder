@@ -2,8 +2,6 @@
 
 A professional Markdown → PDF builder with custom cover pages, Mermaid diagram rendering, language-aware code block styling, and intelligent text formatting.
 
-![GerdsenAI Logo](Assets/GerdsenAI_Neural_G_Invoice.png)
-
 ---
 
 ## Quick Start
